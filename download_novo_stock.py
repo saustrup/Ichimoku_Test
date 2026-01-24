@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 import json
 import os
 
-def download_stock(ticker, stock_name, period="1y", interval="1d", save_to_csv=True):
+def download_stock(ticker, stock_name, period="1y", interval="1d", save_to_csv=True, output_folder=None):
     """
     Download stock prices for a given ticker
 
@@ -28,6 +28,8 @@ def download_stock(ticker, stock_name, period="1y", interval="1d", save_to_csv=T
         Valid intervals: 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo
     save_to_csv : bool
         If True, saves the data to a CSV file
+    output_folder : str
+        Folder to save output files (default: current directory)
 
     Returns:
     --------
@@ -62,6 +64,8 @@ def download_stock(ticker, stock_name, period="1y", interval="1d", save_to_csv=T
     # Save to CSV if requested
     if save_to_csv:
         filename = f"{ticker.lower()}_stock_{period}_{datetime.now().strftime('%Y%m%d')}.csv"
+        if output_folder:
+            filename = os.path.join(output_folder, filename)
         df.to_csv(filename)
         print(f"\nData saved to: {filename}")
 
@@ -104,7 +108,7 @@ def calculate_ichimoku(df):
 
     return df
 
-def plot_ichimoku(df, ticker, stock_name, filename=None):
+def plot_ichimoku(df, ticker, stock_name, filename=None, output_folder=None):
     """
     Create Ichimoku Cloud chart and save as PNG
 
@@ -118,10 +122,14 @@ def plot_ichimoku(df, ticker, stock_name, filename=None):
         Full name of the stock
     filename : str
         Output filename for the PNG (default: auto-generated)
+    output_folder : str
+        Folder to save output files (default: current directory)
     """
 
     if filename is None:
         filename = f"{ticker.lower()}_ichimoku_{datetime.now().strftime('%Y%m%d')}.png"
+    if output_folder:
+        filename = os.path.join(output_folder, filename)
 
     print(f"\nCreating Ichimoku Cloud chart...")
 
@@ -340,7 +348,7 @@ def analyze_ichimoku_signals(df, ticker, stock_name):
 
     return analysis
 
-def generate_report(analyses, filename="ichimoku_trading_report.txt"):
+def generate_report(analyses, filename="ichimoku_trading_report.txt", output_folder=None):
     """
     Generate a trading report based on Ichimoku analysis
 
@@ -350,7 +358,11 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt"):
         List of analysis dictionaries
     filename : str
         Output filename for the report
+    output_folder : str
+        Folder to save output files (default: current directory)
     """
+    if output_folder:
+        filename = os.path.join(output_folder, filename)
     report_lines = []
     report_lines.append("="*80)
     report_lines.append("ICHIMOKU CLOUD TRADING ANALYSIS REPORT")
@@ -410,7 +422,12 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt"):
         report_lines.append(f"Trading Recommendation: {analysis['recommendation']}")
         report_lines.append("")
         report_lines.append("Ichimoku Signals:")
-        for i, signal in enumerate(analysis['signals'], 1):
+        # Sort signals: bullish first, then neutral, then bearish
+        bullish_signals = [s for s in analysis['signals'] if 'BULLISH' in s or 'bullish' in s or 'support' in s.lower()]
+        bearish_signals = [s for s in analysis['signals'] if 'BEARISH' in s or 'bearish' in s or 'resistance' in s.lower()]
+        neutral_signals = [s for s in analysis['signals'] if s not in bullish_signals and s not in bearish_signals]
+        sorted_signals = bullish_signals + neutral_signals + bearish_signals
+        for i, signal in enumerate(sorted_signals, 1):
             report_lines.append(f"  {i}. {signal}")
         report_lines.append("-" * 80)
 
@@ -444,7 +461,7 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt"):
         )
     print("="*80)
 
-def process_stock(stock_info, period, interval, save_csv, save_chart):
+def process_stock(stock_info, period, interval, save_csv, save_chart, output_folder=None):
     """
     Process a single stock: download data and create chart
 
@@ -460,6 +477,8 @@ def process_stock(stock_info, period, interval, save_csv, save_chart):
         Whether to save CSV file
     save_chart : bool
         Whether to save chart
+    output_folder : str
+        Folder to save output files (default: current directory)
 
     Returns:
     --------
@@ -473,7 +492,7 @@ def process_stock(stock_info, period, interval, save_csv, save_chart):
     print("="*70)
 
     # Download stock data
-    df = download_stock(ticker, name, period=period, interval=interval, save_to_csv=save_csv)
+    df = download_stock(ticker, name, period=period, interval=interval, save_to_csv=save_csv, output_folder=output_folder)
 
     if df is not None:
         print("\n" + "="*50)
@@ -491,7 +510,7 @@ def process_stock(stock_info, period, interval, save_csv, save_chart):
 
         # Create and save Ichimoku chart
         if save_chart:
-            plot_ichimoku(df, ticker, name)
+            plot_ichimoku(df, ticker, name, output_folder=output_folder)
 
         # Analyze Ichimoku signals
         analysis = analyze_ichimoku_signals(df, ticker, name)
@@ -504,6 +523,10 @@ def process_stock(stock_info, period, interval, save_csv, save_chart):
 
 def main():
     """Main function to run the script"""
+
+    # Create Output folder if it doesn't exist
+    output_folder = "Output"
+    os.makedirs(output_folder, exist_ok=True)
 
     # Load configuration
     config = load_stocks_config()
@@ -532,7 +555,7 @@ def main():
     analyses = []
     for stock_info in stocks:
         try:
-            analysis = process_stock(stock_info, period, interval, save_csv, save_chart)
+            analysis = process_stock(stock_info, period, interval, save_csv, save_chart, output_folder=output_folder)
             if analysis is not None:
                 analyses.append(analysis)
         except Exception as e:
@@ -545,7 +568,7 @@ def main():
 
     # Generate trading report
     if analyses:
-        generate_report(analyses)
+        generate_report(analyses, output_folder=output_folder)
 
 if __name__ == "__main__":
     main()
