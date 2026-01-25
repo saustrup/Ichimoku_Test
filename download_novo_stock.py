@@ -656,12 +656,12 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
         total = analysis.get('total_score', 0)
 
         # Format values with asterisk if changed
-        kumo_str = f"{kumo:+.1f}*" if 'kumo' in changes else f"{kumo:+.1f}"
-        tk_str = f"{tk:+.1f}*" if 'tk_cross' in changes else f"{tk:+.1f}"
-        cloud_str = f"{cloud:+.1f}*" if 'cloud_color' in changes else f"{cloud:+.1f}"
-        chikou_str = f"{chikou:+.1f}*" if 'chikou' in changes else f"{chikou:+.1f}"
-        kijun_str = f"{kijun:+.1f}*" if 'kijun' in changes else f"{kijun:+.1f}"
-        total_str = f"{total:+.1f}*" if 'total' in changes else f"{total:+.1f}"
+        kumo_str = f"*{kumo:+.1f}" if 'kumo' in changes else f"{kumo:+.1f}"
+        tk_str = f"*{tk:+.1f}" if 'tk_cross' in changes else f"{tk:+.1f}"
+        cloud_str = f"*{cloud:+.1f}" if 'cloud_color' in changes else f"{cloud:+.1f}"
+        chikou_str = f"*{chikou:+.1f}" if 'chikou' in changes else f"{chikou:+.1f}"
+        kijun_str = f"*{kijun:+.1f}" if 'kijun' in changes else f"{kijun:+.1f}"
+        total_str = f"*{total:+.1f}" if 'total' in changes else f"{total:+.1f}"
 
         report_lines.append(
             f"{analysis['ticker']:<12} "

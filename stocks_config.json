@@ -111,6 +111,11 @@
       "exchange": "Copenhagen"
     },
     {
+      "ticker": "ALK-B.CO",
+      "name": "ALK-Abelló",
+      "exchange": "Copenhagen"
+    },
+    {
       "ticker": "AMBU-B.CO",
       "name": "Ambu",
       "exchange": "Copenhagen"
