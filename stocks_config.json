@@ -1,251 +1,164 @@
 {
-  "stocks": [
-    {
-      "ticker": "NVO",
-      "name": "Novo Nordisk",
-      "exchange": "NYSE"
+  "markets": {
+    "Copenhagen": {
+      "name": "Copenhagen Stock Exchange",
+      "suffix": ".CO",
+      "currency": "DKK",
+      "stocks": [
+        {
+          "ticker": "MAERSK-B.CO",
+          "name": "A.P. Moller - Maersk"
+        },
+        {
+          "ticker": "DANSKE.CO",
+          "name": "Danske Bank"
+        },
+        {
+          "ticker": "VWS.CO",
+          "name": "Vestas Wind Systems"
+        },
+        {
+          "ticker": "ORSTED.CO",
+          "name": "Ørsted"
+        },
+        {
+          "ticker": "DSV.CO",
+          "name": "DSV"
+        },
+        {
+          "ticker": "CARLB.CO",
+          "name": "Carlsberg Group"
+        },
+        {
+          "ticker": "COLO-B.CO",
+          "name": "Coloplast"
+        },
+        {
+          "ticker": "DEMANT.CO",
+          "name": "Demant"
+        },
+        {
+          "ticker": "GN.CO",
+          "name": "GN Store Nord"
+        },
+        {
+          "ticker": "PNDORA.CO",
+          "name": "Pandora"
+        },
+        {
+          "ticker": "TRYG.CO",
+          "name": "Tryg"
+        },
+        {
+          "ticker": "ROCK-B.CO",
+          "name": "Rockwool International"
+        },
+        {
+          "ticker": "RBREW.CO",
+          "name": "Royal Unibrew"
+        },
+        {
+          "ticker": "JYSK.CO",
+          "name": "Jyske Bank"
+        },
+        {
+          "ticker": "SIM.CO",
+          "name": "SimCorp"
+        },
+        {
+          "ticker": "NOVO-B.CO",
+          "name": "Novo Nordisk"
+        },
+        {
+          "ticker": "GMAB.CO",
+          "name": "Genmab"
+        },
+        {
+          "ticker": "ALK-B.CO",
+          "name": "ALK-Abelló"
+        },
+        {
+          "ticker": "AMBU-B.CO",
+          "name": "Ambu"
+        },
+        {
+          "ticker": "NZYM-B.CO",
+          "name": "Novozymes"
+        },
+        {
+          "ticker": "CHR.CO",
+          "name": "Chr. Hansen"
+        }
+      ]
     },
-    {
-      "ticker": "AAPL",
-      "name": "Apple Inc.",
-      "exchange": "NASDAQ"
-    },
-    {
-      "ticker": "MSFT",
-      "name": "Microsoft Corporation",
-      "exchange": "NASDAQ"
-    },
-    {
-      "ticker": "GOOGL",
-      "name": "Alphabet Inc.",
-      "exchange": "NASDAQ"
-    },
-    {
-      "ticker": "TSLA",
-      "name": "Tesla Inc.",
-      "exchange": "NASDAQ"
-    },
-    {
-      "ticker": "MAERSK-B.CO",
-      "name": "A.P. Moller - Maersk",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "DANSKE.CO",
-      "name": "Danske Bank",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "VWS.CO",
-      "name": "Vestas Wind Systems",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "ORSTED.CO",
-      "name": "Ørsted",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "DSV.CO",
-      "name": "DSV",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "CARLB.CO",
-      "name": "Carlsberg Group",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "COLO-B.CO",
-      "name": "Coloplast",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "DEMANT.CO",
-      "name": "Demant",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "GN.CO",
-      "name": "GN Store Nord",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "PNDORA.CO",
-      "name": "Pandora",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "TRYG.CO",
-      "name": "Tryg",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "ROCK-B.CO",
-      "name": "Rockwool International",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "RBREW.CO",
-      "name": "Royal Unibrew",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "JYSK.CO",
-      "name": "Jyske Bank",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "SIM.CO",
-      "name": "SimCorp",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "NOVO-B.CO",
-      "name": "Novo Nordisk (Copenhagen)",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "GMAB.CO",
-      "name": "Genmab",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "ALK-B.CO",
-      "name": "ALK-Abelló",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "AMBU-B.CO",
-      "name": "Ambu",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "NZYM-B.CO",
-      "name": "Novozymes",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "BAVA.CO",
-      "name": "Bavarian Nordic",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "BO.CO",
-      "name": "Bang & Olufsen",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "CBRAIN.CO",
-      "name": "cBrain",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "CHEMM.CO",
-      "name": "ChemoMetec",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "CHR.CO",
-      "name": "Chr. Hansen",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "COLUM.CO",
-      "name": "Columbus",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "DFDS.CO",
-      "name": "DFDS",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "DJUR.CO",
-      "name": "Djursland Bank",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "DNORD.CO",
-      "name": "DanNord Property Invest",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "FLS.CO",
-      "name": "FLSmidth",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "HH.CO",
-      "name": "Hunting & Heiberg",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "HLUN-A.CO",
-      "name": "H. Lundbeck A",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "ISS.CO",
-      "name": "ISS",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "MATAS.CO",
-      "name": "Matas",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "NETC.CO",
-      "name": "NetCompany",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "NKT.CO",
-      "name": "NKT",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "NTG.CO",
-      "name": "Nordic Transport Group",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "PARKEN.CO",
-      "name": "Parken Sport & Entertainment",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "RILBA.CO",
-      "name": "Rilba",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "SCHO.CO",
-      "name": "Schouw & Co",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "SOLAR-B.CO",
-      "name": "Solar A/S",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "TRIFOR.CO",
-      "name": "Triford",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "TRMD-A.CO",
-      "name": "TradeMax A",
-      "exchange": "Copenhagen"
-    },
-    {
-      "ticker": "ZEAL.CO",
-      "name": "Zealand Pharma",
-      "exchange": "Copenhagen"
+    "NASDAQ": {
+      "name": "NASDAQ",
+      "suffix": "",
+      "currency": "USD",
+      "stocks": [
+        {
+          "ticker": "AAPL",
+          "name": "Apple Inc."
+        },
+        {
+          "ticker": "MSFT",
+          "name": "Microsoft Corporation"
+        },
+        {
+          "ticker": "GOOGL",
+          "name": "Alphabet Inc."
+        },
+        {
+          "ticker": "AMZN",
+          "name": "Amazon.com Inc."
+        },
+        {
+          "ticker": "NVDA",
+          "name": "NVIDIA Corporation"
+        },
+        {
+          "ticker": "META",
+          "name": "Meta Platforms Inc."
+        },
+        {
+          "ticker": "TSLA",
+          "name": "Tesla Inc."
+        },
+        {
+          "ticker": "NFLX",
+          "name": "Netflix Inc."
+        },
+        {
+          "ticker": "ADBE",
+          "name": "Adobe Inc."
+        },
+        {
+          "ticker": "INTC",
+          "name": "Intel Corporation"
+        },
+        {
+          "ticker": "AMD",
+          "name": "Advanced Micro Devices"
+        },
+        {
+          "ticker": "PYPL",
+          "name": "PayPal Holdings Inc."
+        },
+        {
+          "ticker": "CSCO",
+          "name": "Cisco Systems Inc."
+        },
+        {
+          "ticker": "AVGO",
+          "name": "Broadcom Inc."
+        },
+        {
+          "ticker": "COST",
+          "name": "Costco Wholesale"
+        }
+      ]
     }
-  ],
+  },
   "settings": {
     "period": "1y",
     "interval": "1d",

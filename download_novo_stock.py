@@ -591,7 +591,7 @@ def analyze_ichimoku_signals(df, ticker, stock_name):
 
     return analysis
 
-def generate_report(analyses, filename="ichimoku_trading_report.txt", output_folder=None):
+def generate_report(analyses, filename="ichimoku_trading_report.txt", output_folder=None, market_name=None, currency="USD"):
     """
     Generate a trading report based on Ichimoku analysis
 
@@ -603,12 +603,19 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
         Output filename for the report
     output_folder : str
         Folder to save output files (default: current directory)
+    market_name : str
+        Name of the market for the report header
+    currency : str
+        Currency symbol for prices
     """
     if output_folder:
         filename = os.path.join(output_folder, filename)
     report_lines = []
     report_lines.append("="*80)
-    report_lines.append("ICHIMOKU CLOUD LONG-ONLY ANALYSIS REPORT")
+    title = "ICHIMOKU CLOUD LONG-ONLY ANALYSIS REPORT"
+    if market_name:
+        title += f" - {market_name}"
+    report_lines.append(title)
     report_lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     report_lines.append("="*80)
     report_lines.append("")
@@ -760,7 +767,11 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
 
     # Also print summary to console
     print("\n" + "="*130)
-    print("LONG-ONLY RECOMMENDATIONS SUMMARY (* = changed from previous day):")
+    summary_title = "LONG-ONLY RECOMMENDATIONS SUMMARY"
+    if market_name:
+        summary_title += f" - {market_name}"
+    summary_title += " (* = changed from previous day):"
+    print(summary_title)
     print("-" * 130)
     print(
         f"{'Ticker':<12} {'Kumo':>6} {'TK':>6} {'Cloud':>6} {'Chik':>6} {'Kij':>6} "
@@ -803,7 +814,7 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
     print("="*130)
 
 
-def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimoku_report.pdf"):
+def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimoku_report.pdf", market_name=None, currency="USD"):
     """
     Generate a PDF report with analysis and charts
 
@@ -817,6 +828,10 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
         Folder to save the PDF report
     filename : str
         Output PDF filename
+    market_name : str
+        Name of the market for the report header
+    currency : str
+        Currency symbol for prices
     """
     pdf_path = os.path.join(output_folder, filename)
 
@@ -872,7 +887,10 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
 
     # Title page
     content.append(Spacer(1, 1*inch))
-    content.append(Paragraph("ICHIMOKU CLOUD ANALYSIS REPORT", title_style))
+    title_text = "ICHIMOKU CLOUD ANALYSIS REPORT"
+    if market_name:
+        title_text += f"<br/>{market_name}"
+    content.append(Paragraph(title_text, title_style))
     content.append(Paragraph("Long-Only Trading Evaluation", subtitle_style))
     content.append(Spacer(1, 0.3*inch))
     content.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", subtitle_style))
@@ -1122,13 +1140,9 @@ def process_stock(stock_info, period, interval, save_csv, save_chart, charts_fol
 def main():
     """Main function to run the script"""
 
-    # Create Output folder structure
-    output_folder = "Output"
-    charts_folder = os.path.join(output_folder, "charts")
-    data_folder = os.path.join(output_folder, "data")
-    os.makedirs(output_folder, exist_ok=True)
-    os.makedirs(charts_folder, exist_ok=True)
-    os.makedirs(data_folder, exist_ok=True)
+    # Create base Output folder
+    base_output_folder = "Output"
+    os.makedirs(base_output_folder, exist_ok=True)
 
     # Load configuration
     config = load_stocks_config()
@@ -1138,42 +1152,83 @@ def main():
         return
 
     # Extract settings
-    stocks = config.get('stocks', [])
     settings = config.get('settings', {})
     period = settings.get('period', '1y')
     interval = settings.get('interval', '1d')
     save_csv = settings.get('save_csv', True)
     save_chart = settings.get('save_chart', True)
 
+    # Get markets from config
+    markets = config.get('markets', {})
+
+    if not markets:
+        print("Error: No markets found in configuration. Exiting.")
+        return
+
+    # Count total stocks across all markets
+    total_stocks = sum(len(market_data.get('stocks', [])) for market_data in markets.values())
+
     print("="*70)
     print(f"STOCK DATA DOWNLOAD AND CHART GENERATION")
     print("="*70)
-    print(f"Total stocks to process: {len(stocks)}")
+    print(f"Markets to process: {', '.join(markets.keys())}")
+    print(f"Total stocks to process: {total_stocks}")
     print(f"Period: {period}, Interval: {interval}")
     print(f"Save CSV: {save_csv}, Save Chart: {save_chart}")
     print("="*70)
 
-    # Process each stock and collect analyses
-    analyses = []
-    for stock_info in stocks:
-        try:
-            analysis = process_stock(stock_info, period, interval, save_csv, save_chart,
-                                     charts_folder=charts_folder, data_folder=data_folder)
-            if analysis is not None:
-                analyses.append(analysis)
-        except Exception as e:
-            print(f"\n✗ Error processing {stock_info['ticker']}: {str(e)}")
+    # Process each market
+    for market_key, market_data in markets.items():
+        market_name = market_data.get('name', market_key)
+        currency = market_data.get('currency', 'USD')
+        stocks = market_data.get('stocks', [])
+
+        if not stocks:
+            print(f"\nSkipping {market_name} - no stocks configured")
             continue
 
-    print("\n" + "="*70)
-    print("ALL STOCKS PROCESSED!")
-    print("="*70)
+        print("\n" + "#"*70)
+        print(f"# PROCESSING MARKET: {market_name}")
+        print(f"# Stocks: {len(stocks)}, Currency: {currency}")
+        print("#"*70)
 
-    # Generate trading report
-    if analyses:
-        generate_report(analyses, output_folder=output_folder)
-        # Generate PDF report with charts
-        generate_pdf_report(analyses, charts_folder, output_folder)
+        # Create market-specific output folders
+        market_output_folder = os.path.join(base_output_folder, market_key)
+        charts_folder = os.path.join(market_output_folder, "charts")
+        data_folder = os.path.join(market_output_folder, "data")
+        os.makedirs(market_output_folder, exist_ok=True)
+        os.makedirs(charts_folder, exist_ok=True)
+        os.makedirs(data_folder, exist_ok=True)
+
+        # Process each stock in this market and collect analyses
+        analyses = []
+        for stock_info in stocks:
+            try:
+                analysis = process_stock(stock_info, period, interval, save_csv, save_chart,
+                                         charts_folder=charts_folder, data_folder=data_folder)
+                if analysis is not None:
+                    analyses.append(analysis)
+            except Exception as e:
+                print(f"\n✗ Error processing {stock_info['ticker']}: {str(e)}")
+                continue
+
+        print("\n" + "="*70)
+        print(f"{market_name} STOCKS PROCESSED!")
+        print("="*70)
+
+        # Generate trading report for this market
+        if analyses:
+            report_filename = f"ichimoku_trading_report_{market_key}.txt"
+            pdf_filename = f"ichimoku_report_{market_key}.pdf"
+            generate_report(analyses, filename=report_filename, output_folder=market_output_folder,
+                          market_name=market_name, currency=currency)
+            # Generate PDF report with charts
+            generate_pdf_report(analyses, charts_folder, market_output_folder,
+                              filename=pdf_filename, market_name=market_name, currency=currency)
+
+    print("\n" + "="*70)
+    print("ALL MARKETS PROCESSED!")
+    print("="*70)
 
 if __name__ == "__main__":
     main()
