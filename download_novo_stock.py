@@ -12,6 +12,14 @@ from datetime import datetime, timedelta
 import json
 import os
 
+# PDF generation imports
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch, cm
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle, PageBreak
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+
 def download_stock(ticker, stock_name, period="1y", interval="1d", save_to_csv=True, output_folder=None):
     """
     Download stock prices for a given ticker
@@ -794,6 +802,261 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
     print("        * = value changed from previous day (ALERT)")
     print("="*130)
 
+
+def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimoku_report.pdf"):
+    """
+    Generate a PDF report with analysis and charts
+
+    Parameters:
+    -----------
+    analyses : list
+        List of analysis dictionaries
+    charts_folder : str
+        Folder containing chart PNG files
+    output_folder : str
+        Folder to save the PDF report
+    filename : str
+        Output PDF filename
+    """
+    pdf_path = os.path.join(output_folder, filename)
+
+    # Create document with landscape orientation for better chart display
+    doc = SimpleDocTemplate(
+        pdf_path,
+        pagesize=landscape(A4),
+        rightMargin=0.5*inch,
+        leftMargin=0.5*inch,
+        topMargin=0.5*inch,
+        bottomMargin=0.5*inch
+    )
+
+    # Styles
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=24,
+        alignment=TA_CENTER,
+        spaceAfter=20
+    )
+    subtitle_style = ParagraphStyle(
+        'CustomSubtitle',
+        parent=styles['Heading2'],
+        fontSize=14,
+        alignment=TA_CENTER,
+        spaceAfter=10
+    )
+    heading_style = ParagraphStyle(
+        'CustomHeading',
+        parent=styles['Heading2'],
+        fontSize=16,
+        spaceAfter=10,
+        spaceBefore=15
+    )
+    normal_style = ParagraphStyle(
+        'CustomNormal',
+        parent=styles['Normal'],
+        fontSize=9,
+        spaceAfter=5
+    )
+    alert_style = ParagraphStyle(
+        'AlertStyle',
+        parent=styles['Normal'],
+        fontSize=10,
+        textColor=colors.red,
+        spaceAfter=5
+    )
+
+    # Build content
+    content = []
+
+    # Title page
+    content.append(Spacer(1, 1*inch))
+    content.append(Paragraph("ICHIMOKU CLOUD ANALYSIS REPORT", title_style))
+    content.append(Paragraph("Long-Only Trading Evaluation", subtitle_style))
+    content.append(Spacer(1, 0.3*inch))
+    content.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", subtitle_style))
+    content.append(Spacer(1, 0.5*inch))
+
+    # Summary table
+    content.append(Paragraph("SUMMARY TABLE (* = changed from previous day)", heading_style))
+
+    # Build table data
+    table_data = [['Ticker', 'Kumo', 'TK', 'Cloud', 'Chik', 'Kij', 'Score', 'Recommendation', 'Price']]
+
+    for analysis in analyses:
+        components = analysis.get('components', {})
+        changes = analysis.get('changes', {})
+
+        kumo = components.get('kumo', {}).get('contribution', 0)
+        tk = components.get('tk_cross', {}).get('contribution', 0)
+        cloud = components.get('cloud_color', {}).get('contribution', 0)
+        chikou = components.get('chikou', {}).get('contribution', 0)
+        kijun = components.get('kijun', {}).get('contribution', 0)
+        total = analysis.get('total_score', 0)
+
+        # Format values with asterisk if changed
+        kumo_str = f"{kumo:+.1f}*" if 'kumo' in changes else f"{kumo:+.1f}"
+        tk_str = f"{tk:+.1f}*" if 'tk_cross' in changes else f"{tk:+.1f}"
+        cloud_str = f"{cloud:+.1f}*" if 'cloud_color' in changes else f"{cloud:+.1f}"
+        chikou_str = f"{chikou:+.1f}*" if 'chikou' in changes else f"{chikou:+.1f}"
+        kijun_str = f"{kijun:+.1f}*" if 'kijun' in changes else f"{kijun:+.1f}"
+        total_str = f"{total:+.1f}*" if 'total' in changes else f"{total:+.1f}"
+
+        table_data.append([
+            analysis['ticker'],
+            kumo_str,
+            tk_str,
+            cloud_str,
+            chikou_str,
+            kijun_str,
+            total_str,
+            analysis['recommendation'],
+            f"${analysis['close_price']:.2f}"
+        ])
+
+    # Create table with styling
+    table = Table(table_data, repeatRows=1)
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.darkblue),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('FONTSIZE', (0, 1), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightgrey]),
+    ]))
+
+    # Color code recommendations
+    for i, analysis in enumerate(analyses, 1):
+        rec = analysis['recommendation']
+        if rec == 'BUY':
+            table.setStyle(TableStyle([('BACKGROUND', (7, i), (7, i), colors.lightgreen)]))
+        elif rec == 'BUY (MODERATE)':
+            table.setStyle(TableStyle([('BACKGROUND', (7, i), (7, i), colors.palegreen)]))
+        elif rec == 'AVOID':
+            table.setStyle(TableStyle([('BACKGROUND', (7, i), (7, i), colors.lightcoral)]))
+        elif rec == 'WAIT':
+            table.setStyle(TableStyle([('BACKGROUND', (7, i), (7, i), colors.lightyellow)]))
+
+        # Highlight rows with changes
+        if analysis.get('changes'):
+            table.setStyle(TableStyle([('BACKGROUND', (0, i), (0, i), colors.yellow)]))
+
+    content.append(table)
+    content.append(Spacer(1, 0.2*inch))
+
+    # Legend
+    legend_text = "Legend: Kumo=Price vs Cloud | TK=Tenkan vs Kijun | Cloud=Future Cloud Color | Chik=Chikou Span | Kij=Price vs Kijun"
+    content.append(Paragraph(legend_text, normal_style))
+    content.append(Paragraph("* = value changed from previous day (ALERT) | Yellow ticker = signals changed today", normal_style))
+
+    content.append(PageBreak())
+
+    # Individual stock pages with charts
+    for analysis in analyses:
+        ticker = analysis['ticker']
+        changes = analysis.get('changes', {})
+
+        # Stock header
+        content.append(Paragraph(f"{analysis['name']} ({ticker})", heading_style))
+        content.append(Paragraph(f"Date: {analysis['date']} | Close: ${analysis['close_price']:.2f}", normal_style))
+
+        # Alert if changes detected
+        if changes:
+            content.append(Paragraph("⚠ ALERT: Signal changes detected from previous day!", alert_style))
+
+        # Overall assessment
+        total_str = f"{analysis.get('total_score', 0):+.1f}"
+        if 'total' in changes:
+            prev_total = changes['total']['prev']
+            total_str += f" (was {prev_total:+.1f})"
+
+        content.append(Paragraph(
+            f"<b>Trend:</b> {analysis['trend']} | <b>Strength:</b> {analysis['strength']} | "
+            f"<b>Score:</b> {total_str} | <b>Recommendation:</b> {analysis['recommendation']}",
+            normal_style
+        ))
+
+        # Component breakdown table
+        comp_data = [['Component', 'Signal', 'Contribution', 'Changed?']]
+        component_names = {
+            'kumo': 'Price vs Cloud (Kumo)',
+            'tk_cross': 'Tenkan vs Kijun',
+            'cloud_color': 'Future Cloud Color',
+            'chikou': 'Chikou Span',
+            'kijun': 'Price vs Kijun'
+        }
+
+        for comp_key in ['kumo', 'tk_cross', 'cloud_color', 'chikou', 'kijun']:
+            comp = analysis['components'].get(comp_key, {})
+            contrib = comp.get('contribution', 0)
+
+            changed = 'YES' if comp_key in changes else ''
+            if comp_key in changes:
+                prev_val = changes[comp_key]['prev']
+                changed = f"YES ({prev_val:+.1f} → {contrib:+.1f})"
+
+            comp_data.append([
+                component_names.get(comp_key, comp_key),
+                comp.get('signal', 'N/A'),
+                f"{contrib:+.1f}",
+                changed
+            ])
+
+        comp_table = Table(comp_data, colWidths=[2.5*inch, 1.5*inch, 1*inch, 1.5*inch])
+        comp_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightgrey]),
+        ]))
+
+        # Highlight changed components
+        for i, comp_key in enumerate(['kumo', 'tk_cross', 'cloud_color', 'chikou', 'kijun'], 1):
+            if comp_key in changes:
+                comp_table.setStyle(TableStyle([('BACKGROUND', (-1, i), (-1, i), colors.yellow)]))
+
+        content.append(Spacer(1, 0.1*inch))
+        content.append(comp_table)
+        content.append(Spacer(1, 0.2*inch))
+
+        # Add chart image
+        chart_filename = f"{ticker.lower()}_ichimoku_{datetime.now().strftime('%Y%m%d')}.png"
+        chart_path = os.path.join(charts_folder, chart_filename)
+
+        if os.path.exists(chart_path):
+            # Scale image to fit page width while maintaining aspect ratio
+            img = Image(chart_path, width=9*inch, height=5*inch)
+            content.append(img)
+        else:
+            content.append(Paragraph(f"Chart not found: {chart_filename}", normal_style))
+
+        content.append(PageBreak())
+
+    # Disclaimer page
+    content.append(Spacer(1, 2*inch))
+    content.append(Paragraph("DISCLAIMER", heading_style))
+    content.append(Paragraph(
+        "This report is for educational purposes only and should not be considered as financial advice. "
+        "Always conduct your own research and consult with a qualified financial advisor before making "
+        "investment decisions. Past performance is not indicative of future results.",
+        normal_style
+    ))
+
+    # Build PDF
+    doc.build(content)
+    print(f"\nPDF report saved to: {pdf_path}")
+
+    return pdf_path
+
+
 def process_stock(stock_info, period, interval, save_csv, save_chart, charts_folder=None, data_folder=None):
     """
     Process a single stock: download data and create chart
@@ -909,6 +1172,8 @@ def main():
     # Generate trading report
     if analyses:
         generate_report(analyses, output_folder=output_folder)
+        # Generate PDF report with charts
+        generate_pdf_report(analyses, charts_folder, output_folder)
 
 if __name__ == "__main__":
     main()

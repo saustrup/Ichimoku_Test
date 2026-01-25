@@ -40,3 +40,4 @@ ichimoku_trading_report.txt
 # OS
 .DS_Store
 Thumbs.db
+Output/ichimoku_report.pdf
