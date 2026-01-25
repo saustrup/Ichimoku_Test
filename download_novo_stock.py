@@ -248,6 +248,116 @@ def load_stocks_config(config_file="stocks_config.json"):
 
     return config
 
+def analyze_single_day(df, day_idx, chikou_offset):
+    """
+    Analyze Ichimoku signals for a single day
+
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        DataFrame with Ichimoku indicators
+    day_idx : int
+        Index of the day to analyze (negative for from end)
+    chikou_offset : int
+        Offset for chikou span comparison
+
+    Returns:
+    --------
+    dict : Component contributions for that day
+    """
+    if abs(day_idx) > len(df):
+        return None
+
+    day_data = df.iloc[day_idx]
+    chikou_idx = day_idx - 26  # chikou comparison point
+
+    if abs(chikou_idx) > len(df):
+        chikou_idx = -len(df)
+
+    components = {}
+
+    # Component 1: Price vs Cloud (Kumo)
+    if pd.notna(day_data['senkou_span_a']) and pd.notna(day_data['senkou_span_b']):
+        cloud_top = max(day_data['senkou_span_a'], day_data['senkou_span_b'])
+        cloud_bottom = min(day_data['senkou_span_a'], day_data['senkou_span_b'])
+
+        if day_data['Close'] > cloud_top:
+            components['kumo'] = 2
+        elif day_data['Close'] < cloud_bottom:
+            components['kumo'] = -2
+        else:
+            components['kumo'] = 0
+    else:
+        components['kumo'] = 0
+
+    # Component 2: Tenkan-sen vs Kijun-sen
+    if pd.notna(day_data['tenkan_sen']) and pd.notna(day_data['kijun_sen']):
+        if day_data['tenkan_sen'] > day_data['kijun_sen']:
+            components['tk_cross'] = 1
+        elif day_data['tenkan_sen'] < day_data['kijun_sen']:
+            components['tk_cross'] = -1
+        else:
+            components['tk_cross'] = 0
+    else:
+        components['tk_cross'] = 0
+
+    # Component 3: Cloud Color
+    if pd.notna(day_data['senkou_span_a']) and pd.notna(day_data['senkou_span_b']):
+        if day_data['senkou_span_a'] > day_data['senkou_span_b']:
+            components['cloud_color'] = 1
+        else:
+            components['cloud_color'] = -1
+    else:
+        components['cloud_color'] = 0
+
+    # Component 4: Chikou Span
+    if len(df) >= 27 and abs(chikou_idx) <= len(df):
+        chikou_comparison_price = df.iloc[chikou_idx]['Close']
+        chikou_span_value = df.iloc[chikou_idx]['chikou_span']
+        chikou_senkou_a = df.iloc[chikou_idx]['senkou_span_a']
+        chikou_senkou_b = df.iloc[chikou_idx]['senkou_span_b']
+
+        if pd.notna(chikou_span_value):
+            if pd.notna(chikou_senkou_a) and pd.notna(chikou_senkou_b):
+                chikou_cloud_top = max(chikou_senkou_a, chikou_senkou_b)
+                chikou_cloud_bottom = min(chikou_senkou_a, chikou_senkou_b)
+            else:
+                chikou_cloud_top = None
+                chikou_cloud_bottom = None
+
+            if chikou_span_value > chikou_comparison_price:
+                if chikou_cloud_top is not None and chikou_span_value > chikou_cloud_top:
+                    components['chikou'] = 2
+                elif chikou_cloud_bottom is not None and chikou_span_value < chikou_cloud_bottom:
+                    components['chikou'] = 0.5
+                else:
+                    components['chikou'] = 1
+            elif chikou_span_value < chikou_comparison_price:
+                if chikou_cloud_bottom is not None and chikou_span_value < chikou_cloud_bottom:
+                    components['chikou'] = -2
+                elif chikou_cloud_top is not None and chikou_span_value > chikou_cloud_top:
+                    components['chikou'] = -0.5
+                else:
+                    components['chikou'] = -1
+            else:
+                components['chikou'] = 0
+        else:
+            components['chikou'] = 0
+    else:
+        components['chikou'] = 0
+
+    # Component 5: Price vs Kijun-sen
+    if pd.notna(day_data['kijun_sen']):
+        if day_data['Close'] > day_data['kijun_sen']:
+            components['kijun'] = 1
+        else:
+            components['kijun'] = -1
+    else:
+        components['kijun'] = 0
+
+    return components
+
+
 def analyze_ichimoku_signals(df, ticker, stock_name):
     """
     Analyze Ichimoku Cloud signals for trading decisions
@@ -273,18 +383,27 @@ def analyze_ichimoku_signals(df, ticker, stock_name):
     if latest_valid_chikou_idx < -len(df):
         latest_valid_chikou_idx = -len(df)
 
+    # Analyze previous day for comparison
+    prev_day_components = None
+    if len(df) >= 2:
+        prev_day_components = analyze_single_day(df, -2, -28)
+
     analysis = {
         'ticker': ticker,
         'name': stock_name,
         'date': latest.name.strftime('%Y-%m-%d'),
         'close_price': latest['Close'],
         'signals': [],
+        'components': {},  # Store each Ichimoku component's contribution
+        'prev_components': prev_day_components,  # Store previous day for comparison
+        'changes': {},  # Track which components changed
         'trend': 'NEUTRAL',
         'strength': 'WEAK',
         'recommendation': 'HOLD'
     }
 
-    # Signal 1: Price vs Cloud
+    # Component 1: Price vs Cloud (Kumo)
+    component_kumo = {'name': 'Price vs Cloud (Kumo)', 'signal': 'NEUTRAL', 'description': '', 'contribution': 0}
     if pd.notna(latest['senkou_span_a']) and pd.notna(latest['senkou_span_b']):
         cloud_top = max(latest['senkou_span_a'], latest['senkou_span_b'])
         cloud_bottom = min(latest['senkou_span_a'], latest['senkou_span_b'])
@@ -292,59 +411,175 @@ def analyze_ichimoku_signals(df, ticker, stock_name):
         if latest['Close'] > cloud_top:
             analysis['signals'].append("Price above cloud (BULLISH)")
             analysis['trend'] = 'BULLISH'
+            component_kumo['signal'] = 'BULLISH'
+            component_kumo['description'] = f"Price ${latest['Close']:.2f} is above cloud top ${cloud_top:.2f}"
+            component_kumo['contribution'] = 2
         elif latest['Close'] < cloud_bottom:
             analysis['signals'].append("Price below cloud (BEARISH)")
             analysis['trend'] = 'BEARISH'
+            component_kumo['signal'] = 'BEARISH'
+            component_kumo['description'] = f"Price ${latest['Close']:.2f} is below cloud bottom ${cloud_bottom:.2f}"
+            component_kumo['contribution'] = -2
         else:
             analysis['signals'].append("Price inside cloud (NEUTRAL - consolidation)")
+            component_kumo['signal'] = 'NEUTRAL'
+            component_kumo['description'] = f"Price ${latest['Close']:.2f} is inside cloud (${cloud_bottom:.2f} - ${cloud_top:.2f})"
+            component_kumo['contribution'] = 0
+    analysis['components']['kumo'] = component_kumo
 
-    # Signal 2: Tenkan-sen vs Kijun-sen (TK Cross)
+    # Component 2: Tenkan-sen vs Kijun-sen (TK Cross)
+    component_tk = {'name': 'Tenkan-sen vs Kijun-sen', 'signal': 'NEUTRAL', 'description': '', 'contribution': 0}
     if pd.notna(latest['tenkan_sen']) and pd.notna(latest['kijun_sen']):
         if latest['tenkan_sen'] > latest['kijun_sen']:
             analysis['signals'].append("Tenkan-sen above Kijun-sen (BULLISH)")
             if analysis['trend'] == 'BULLISH':
                 analysis['strength'] = 'MODERATE'
+            component_tk['signal'] = 'BULLISH'
+            component_tk['description'] = f"Tenkan ${latest['tenkan_sen']:.2f} > Kijun ${latest['kijun_sen']:.2f}"
+            component_tk['contribution'] = 1
         elif latest['tenkan_sen'] < latest['kijun_sen']:
             analysis['signals'].append("Tenkan-sen below Kijun-sen (BEARISH)")
             if analysis['trend'] == 'BEARISH':
                 analysis['strength'] = 'MODERATE'
+            component_tk['signal'] = 'BEARISH'
+            component_tk['description'] = f"Tenkan ${latest['tenkan_sen']:.2f} < Kijun ${latest['kijun_sen']:.2f}"
+            component_tk['contribution'] = -1
+        else:
+            component_tk['signal'] = 'NEUTRAL'
+            component_tk['description'] = f"Tenkan ${latest['tenkan_sen']:.2f} = Kijun ${latest['kijun_sen']:.2f}"
+            component_tk['contribution'] = 0
+    analysis['components']['tk_cross'] = component_tk
 
-    # Signal 3: Cloud Color (Future Cloud)
+    # Component 3: Cloud Color (Future Cloud / Senkou Spans)
+    component_cloud = {'name': 'Future Cloud Color', 'signal': 'NEUTRAL', 'description': '', 'contribution': 0}
     if pd.notna(latest['senkou_span_a']) and pd.notna(latest['senkou_span_b']):
         if latest['senkou_span_a'] > latest['senkou_span_b']:
             analysis['signals'].append("Cloud is green/bullish (future support)")
+            component_cloud['signal'] = 'BULLISH'
+            component_cloud['description'] = f"Senkou A ${latest['senkou_span_a']:.2f} > Senkou B ${latest['senkou_span_b']:.2f} (green cloud)"
+            component_cloud['contribution'] = 1
         else:
             analysis['signals'].append("Cloud is red/bearish (future resistance)")
+            component_cloud['signal'] = 'BEARISH'
+            component_cloud['description'] = f"Senkou A ${latest['senkou_span_a']:.2f} < Senkou B ${latest['senkou_span_b']:.2f} (red cloud)"
+            component_cloud['contribution'] = -1
+    analysis['components']['cloud_color'] = component_cloud
 
-    # Signal 4: Chikou Span vs Price
+    # Component 4: Chikou Span vs Price and Cloud
+    component_chikou = {'name': 'Chikou Span (Lagging)', 'signal': 'NEUTRAL', 'description': '', 'contribution': 0}
     if len(df) >= 27:
         chikou_comparison_price = df.iloc[latest_valid_chikou_idx]['Close']
         chikou_span_value = df.iloc[latest_valid_chikou_idx]['chikou_span']
+        # Get the cloud values at the chikou comparison point
+        chikou_senkou_a = df.iloc[latest_valid_chikou_idx]['senkou_span_a']
+        chikou_senkou_b = df.iloc[latest_valid_chikou_idx]['senkou_span_b']
 
         if pd.notna(chikou_span_value):
-            if chikou_span_value > chikou_comparison_price:
-                analysis['signals'].append("Chikou Span above price (BULLISH)")
-                if analysis['trend'] == 'BULLISH' and analysis['strength'] == 'MODERATE':
-                    analysis['strength'] = 'STRONG'
-            elif chikou_span_value < chikou_comparison_price:
-                analysis['signals'].append("Chikou Span below price (BEARISH)")
-                if analysis['trend'] == 'BEARISH' and analysis['strength'] == 'MODERATE':
-                    analysis['strength'] = 'STRONG'
+            # Determine cloud boundaries at chikou position
+            if pd.notna(chikou_senkou_a) and pd.notna(chikou_senkou_b):
+                chikou_cloud_top = max(chikou_senkou_a, chikou_senkou_b)
+                chikou_cloud_bottom = min(chikou_senkou_a, chikou_senkou_b)
+            else:
+                chikou_cloud_top = None
+                chikou_cloud_bottom = None
 
-    # Signal 5: Price vs Kijun-sen
+            if chikou_span_value > chikou_comparison_price:
+                # Chikou above price - bullish, but check cloud position for strength
+                if chikou_cloud_top is not None and chikou_span_value > chikou_cloud_top:
+                    analysis['signals'].append("Chikou Span above price and above cloud (STRONG BULLISH)")
+                    if analysis['trend'] == 'BULLISH' and analysis['strength'] == 'MODERATE':
+                        analysis['strength'] = 'STRONG'
+                    component_chikou['signal'] = 'STRONG BULLISH'
+                    component_chikou['description'] = f"Chikou ${chikou_span_value:.2f} above price ${chikou_comparison_price:.2f} and above cloud"
+                    component_chikou['contribution'] = 2
+                elif chikou_cloud_bottom is not None and chikou_span_value < chikou_cloud_bottom:
+                    analysis['signals'].append("Chikou Span above price but below cloud (WEAK BULLISH)")
+                    component_chikou['signal'] = 'WEAK BULLISH'
+                    component_chikou['description'] = f"Chikou ${chikou_span_value:.2f} above price ${chikou_comparison_price:.2f} but below cloud"
+                    component_chikou['contribution'] = 0.5
+                else:
+                    analysis['signals'].append("Chikou Span above price but inside cloud (GOOD BULLISH)")
+                    if analysis['trend'] == 'BULLISH' and analysis['strength'] == 'WEAK':
+                        analysis['strength'] = 'MODERATE'
+                    component_chikou['signal'] = 'GOOD BULLISH'
+                    component_chikou['description'] = f"Chikou ${chikou_span_value:.2f} above price ${chikou_comparison_price:.2f} but inside cloud"
+                    component_chikou['contribution'] = 1
+            elif chikou_span_value < chikou_comparison_price:
+                # Chikou below price - bearish, but check cloud position for strength
+                if chikou_cloud_bottom is not None and chikou_span_value < chikou_cloud_bottom:
+                    analysis['signals'].append("Chikou Span below price and below cloud (STRONG BEARISH)")
+                    if analysis['trend'] == 'BEARISH' and analysis['strength'] == 'MODERATE':
+                        analysis['strength'] = 'STRONG'
+                    component_chikou['signal'] = 'STRONG BEARISH'
+                    component_chikou['description'] = f"Chikou ${chikou_span_value:.2f} below price ${chikou_comparison_price:.2f} and below cloud"
+                    component_chikou['contribution'] = -2
+                elif chikou_cloud_top is not None and chikou_span_value > chikou_cloud_top:
+                    analysis['signals'].append("Chikou Span below price but above cloud (WEAK BEARISH)")
+                    component_chikou['signal'] = 'WEAK BEARISH'
+                    component_chikou['description'] = f"Chikou ${chikou_span_value:.2f} below price ${chikou_comparison_price:.2f} but above cloud"
+                    component_chikou['contribution'] = -0.5
+                else:
+                    analysis['signals'].append("Chikou Span below price but inside cloud (GOOD BEARISH)")
+                    if analysis['trend'] == 'BEARISH' and analysis['strength'] == 'WEAK':
+                        analysis['strength'] = 'MODERATE'
+                    component_chikou['signal'] = 'GOOD BEARISH'
+                    component_chikou['description'] = f"Chikou ${chikou_span_value:.2f} below price ${chikou_comparison_price:.2f} but inside cloud"
+                    component_chikou['contribution'] = -1
+    analysis['components']['chikou'] = component_chikou
+
+    # Component 5: Price vs Kijun-sen
+    component_kijun = {'name': 'Price vs Kijun-sen', 'signal': 'NEUTRAL', 'description': '', 'contribution': 0}
     if pd.notna(latest['kijun_sen']):
         if latest['Close'] > latest['kijun_sen']:
             analysis['signals'].append("Price above Kijun-sen (support)")
+            component_kijun['signal'] = 'BULLISH'
+            component_kijun['description'] = f"Price ${latest['Close']:.2f} above Kijun ${latest['kijun_sen']:.2f} (support level)"
+            component_kijun['contribution'] = 1
         else:
             analysis['signals'].append("Price below Kijun-sen (resistance)")
+            component_kijun['signal'] = 'BEARISH'
+            component_kijun['description'] = f"Price ${latest['Close']:.2f} below Kijun ${latest['kijun_sen']:.2f} (resistance level)"
+            component_kijun['contribution'] = -1
+    analysis['components']['kijun'] = component_kijun
 
-    # Generate recommendation
-    if analysis['trend'] == 'BULLISH' and analysis['strength'] in ['MODERATE', 'STRONG']:
+    # Calculate total score
+    total_score = sum(c['contribution'] for c in analysis['components'].values())
+    analysis['total_score'] = total_score
+
+    # Compare with previous day and mark changes
+    if prev_day_components:
+        for comp_key in ['kumo', 'tk_cross', 'cloud_color', 'chikou', 'kijun']:
+            current_val = analysis['components'].get(comp_key, {}).get('contribution', 0)
+            prev_val = prev_day_components.get(comp_key, 0)
+            if current_val != prev_val:
+                analysis['changes'][comp_key] = {
+                    'prev': prev_val,
+                    'current': current_val,
+                    'direction': 'up' if current_val > prev_val else 'down'
+                }
+
+    # Calculate previous total score for comparison
+    if prev_day_components:
+        prev_total = sum(prev_day_components.values())
+        analysis['prev_total_score'] = prev_total
+        if total_score != prev_total:
+            analysis['changes']['total'] = {
+                'prev': prev_total,
+                'current': total_score,
+                'direction': 'up' if total_score > prev_total else 'down'
+            }
+
+    # Generate recommendation (long-only perspective)
+    if analysis['trend'] == 'BULLISH' and analysis['strength'] == 'STRONG':
         analysis['recommendation'] = 'BUY'
-    elif analysis['trend'] == 'BEARISH' and analysis['strength'] in ['MODERATE', 'STRONG']:
-        analysis['recommendation'] = 'SELL'
-    else:
-        analysis['recommendation'] = 'HOLD'
+    elif analysis['trend'] == 'BULLISH' and analysis['strength'] == 'MODERATE':
+        analysis['recommendation'] = 'BUY (MODERATE)'
+    elif analysis['trend'] == 'BULLISH' and analysis['strength'] == 'WEAK':
+        analysis['recommendation'] = 'WAIT'
+    elif analysis['trend'] == 'NEUTRAL':
+        analysis['recommendation'] = 'WAIT'
+    elif analysis['trend'] == 'BEARISH':
+        analysis['recommendation'] = 'AVOID'
 
     return analysis
 
@@ -365,70 +600,140 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
         filename = os.path.join(output_folder, filename)
     report_lines = []
     report_lines.append("="*80)
-    report_lines.append("ICHIMOKU CLOUD TRADING ANALYSIS REPORT")
+    report_lines.append("ICHIMOKU CLOUD LONG-ONLY ANALYSIS REPORT")
     report_lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     report_lines.append("="*80)
     report_lines.append("")
 
-    report_lines.append("ICHIMOKU TRADING RULES SUMMARY:")
+    report_lines.append("LONG-ONLY ICHIMOKU TRADING RULES:")
     report_lines.append("-" * 80)
-    report_lines.append("1. BULLISH SIGNALS:")
+    report_lines.append("BULLISH SIGNALS (Favorable for Long Entry):")
     report_lines.append("   - Price above the cloud")
-    report_lines.append("   - Tenkan-sen crosses above Kijun-sen")
-    report_lines.append("   - Chikou Span above price from 26 periods ago")
+    report_lines.append("   - Tenkan-sen above Kijun-sen")
+    report_lines.append("   - Chikou Span above price and cloud from 26 periods ago")
     report_lines.append("   - Cloud is green (Senkou Span A > Senkou Span B)")
     report_lines.append("")
-    report_lines.append("2. BEARISH SIGNALS:")
+    report_lines.append("WARNING SIGNALS (Avoid Long Entry):")
     report_lines.append("   - Price below the cloud")
-    report_lines.append("   - Tenkan-sen crosses below Kijun-sen")
+    report_lines.append("   - Tenkan-sen below Kijun-sen")
     report_lines.append("   - Chikou Span below price from 26 periods ago")
     report_lines.append("   - Cloud is red (Senkou Span A < Senkou Span B)")
     report_lines.append("")
-    report_lines.append("3. NEUTRAL/CONSOLIDATION:")
-    report_lines.append("   - Price inside the cloud")
-    report_lines.append("   - Mixed signals from different indicators")
+    report_lines.append("RECOMMENDATIONS:")
+    report_lines.append("   - BUY: Strong bullish signals - favorable for long entry")
+    report_lines.append("   - BUY (MODERATE): Good bullish signals - consider long entry")
+    report_lines.append("   - WAIT: Weak or neutral signals - wait for better setup")
+    report_lines.append("   - AVOID: Bearish signals - not suitable for long entry")
     report_lines.append("="*80)
     report_lines.append("")
 
-    # Summary table
-    report_lines.append("SUMMARY TABLE:")
-    report_lines.append("-" * 80)
-    report_lines.append(f"{'Ticker':<10} {'Trend':<12} {'Strength':<12} {'Recommendation':<15} {'Price':<12}")
-    report_lines.append("-" * 80)
+    # Summary table with component breakdown
+    report_lines.append("SUMMARY TABLE (* = changed from previous day):")
+    report_lines.append("-" * 130)
+    report_lines.append(
+        f"{'Ticker':<12} {'Kumo':>6} {'TK':>6} {'Cloud':>6} {'Chik':>6} {'Kij':>6} "
+        f"{'Score':>7} {'Long Entry':<15} {'Price':<10}"
+    )
+    report_lines.append("-" * 130)
 
     for analysis in analyses:
+        components = analysis.get('components', {})
+        changes = analysis.get('changes', {})
+
+        kumo = components.get('kumo', {}).get('contribution', 0)
+        tk = components.get('tk_cross', {}).get('contribution', 0)
+        cloud = components.get('cloud_color', {}).get('contribution', 0)
+        chikou = components.get('chikou', {}).get('contribution', 0)
+        kijun = components.get('kijun', {}).get('contribution', 0)
+        total = analysis.get('total_score', 0)
+
+        # Format values with asterisk if changed
+        kumo_str = f"{kumo:+.1f}*" if 'kumo' in changes else f"{kumo:+.1f}"
+        tk_str = f"{tk:+.1f}*" if 'tk_cross' in changes else f"{tk:+.1f}"
+        cloud_str = f"{cloud:+.1f}*" if 'cloud_color' in changes else f"{cloud:+.1f}"
+        chikou_str = f"{chikou:+.1f}*" if 'chikou' in changes else f"{chikou:+.1f}"
+        kijun_str = f"{kijun:+.1f}*" if 'kijun' in changes else f"{kijun:+.1f}"
+        total_str = f"{total:+.1f}*" if 'total' in changes else f"{total:+.1f}"
+
         report_lines.append(
-            f"{analysis['ticker']:<10} "
-            f"{analysis['trend']:<12} "
-            f"{analysis['strength']:<12} "
+            f"{analysis['ticker']:<12} "
+            f"{kumo_str:>6} "
+            f"{tk_str:>6} "
+            f"{cloud_str:>6} "
+            f"{chikou_str:>6} "
+            f"{kijun_str:>6} "
+            f"{total_str:>7} "
             f"{analysis['recommendation']:<15} "
-            f"${analysis['close_price']:<11.2f}"
+            f"${analysis['close_price']:<9.2f}"
         )
 
-    report_lines.append("="*80)
+    report_lines.append("-" * 130)
+    report_lines.append("Legend: Kumo=Price vs Cloud | TK=Tenkan vs Kijun | Cloud=Future Cloud Color | Chik=Chikou Span | Kij=Price vs Kijun")
+    report_lines.append("        * = value changed from previous day (ALERT)")
+    report_lines.append("="*130)
     report_lines.append("")
 
     # Detailed analysis for each stock
-    report_lines.append("DETAILED ANALYSIS:")
+    report_lines.append("DETAILED COMPONENT ANALYSIS:")
     report_lines.append("="*80)
 
     for analysis in analyses:
+        changes = analysis.get('changes', {})
         report_lines.append("")
+        report_lines.append(f"{'='*80}")
         report_lines.append(f"Stock: {analysis['name']} ({analysis['ticker']})")
+        report_lines.append(f"{'='*80}")
         report_lines.append(f"Date: {analysis['date']}")
         report_lines.append(f"Close Price: ${analysis['close_price']:.2f}")
-        report_lines.append(f"Trend: {analysis['trend']}")
-        report_lines.append(f"Signal Strength: {analysis['strength']}")
-        report_lines.append(f"Trading Recommendation: {analysis['recommendation']}")
         report_lines.append("")
-        report_lines.append("Ichimoku Signals:")
-        # Sort signals: bullish first, then neutral, then bearish
-        bullish_signals = [s for s in analysis['signals'] if 'BULLISH' in s or 'bullish' in s or 'support' in s.lower()]
-        bearish_signals = [s for s in analysis['signals'] if 'BEARISH' in s or 'bearish' in s or 'resistance' in s.lower()]
-        neutral_signals = [s for s in analysis['signals'] if s not in bullish_signals and s not in bearish_signals]
-        sorted_signals = bullish_signals + neutral_signals + bearish_signals
-        for i, signal in enumerate(sorted_signals, 1):
-            report_lines.append(f"  {i}. {signal}")
+
+        # Show if there are any changes
+        if changes:
+            report_lines.append("*** ALERT: Signal changes detected from previous day ***")
+
+        total_str = f"{analysis.get('total_score', 0):+.1f}"
+        if 'total' in changes:
+            prev_total = changes['total']['prev']
+            total_str += f" (was {prev_total:+.1f})"
+
+        report_lines.append(f"OVERALL: {analysis['trend']} | Strength: {analysis['strength']} | Score: {total_str}")
+        report_lines.append(f"LONG ENTRY RECOMMENDATION: {analysis['recommendation']}")
+        report_lines.append("")
+        report_lines.append("COMPONENT BREAKDOWN:")
+        report_lines.append("-" * 80)
+
+        # Display each component
+        component_order = ['kumo', 'tk_cross', 'cloud_color', 'chikou', 'kijun']
+        for comp_key in component_order:
+            if comp_key in analysis.get('components', {}):
+                comp = analysis['components'][comp_key]
+                # Determine indicator symbol based on contribution
+                if comp['contribution'] > 0:
+                    indicator = "+"
+                    for_long = "Positive"
+                elif comp['contribution'] < 0:
+                    indicator = "-"
+                    for_long = "Warning"
+                else:
+                    indicator = "~"
+                    for_long = "Neutral"
+
+                # Check if this component changed
+                changed_marker = ""
+                change_info = ""
+                if comp_key in changes:
+                    changed_marker = " *CHANGED*"
+                    prev_val = changes[comp_key]['prev']
+                    direction = changes[comp_key]['direction']
+                    arrow = "↑" if direction == 'up' else "↓"
+                    change_info = f" (was {prev_val:+.1f} {arrow})"
+
+                report_lines.append(f"  {comp['name']}{changed_marker}")
+                report_lines.append(f"    Signal: {comp['signal']} ({for_long} for Long)")
+                report_lines.append(f"    {comp['description']}")
+                report_lines.append(f"    Contribution: {indicator}{abs(comp['contribution']):.1f}{change_info}")
+                report_lines.append("")
+
         report_lines.append("-" * 80)
 
     report_lines.append("")
@@ -446,22 +751,50 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
     print(f"\nTrading report saved to: {filename}")
 
     # Also print summary to console
-    print("\n" + "="*80)
-    print("TRADING RECOMMENDATIONS SUMMARY:")
-    print("-" * 80)
-    print(f"{'Ticker':<10} {'Trend':<12} {'Strength':<12} {'Recommendation':<15} {'Price':<12}")
-    print("-" * 80)
+    print("\n" + "="*130)
+    print("LONG-ONLY RECOMMENDATIONS SUMMARY (* = changed from previous day):")
+    print("-" * 130)
+    print(
+        f"{'Ticker':<12} {'Kumo':>6} {'TK':>6} {'Cloud':>6} {'Chik':>6} {'Kij':>6} "
+        f"{'Score':>7} {'Long Entry':<15} {'Price':<10}"
+    )
+    print("-" * 130)
     for analysis in analyses:
-        print(
-            f"{analysis['ticker']:<10} "
-            f"{analysis['trend']:<12} "
-            f"{analysis['strength']:<12} "
-            f"{analysis['recommendation']:<15} "
-            f"${analysis['close_price']:<11.2f}"
-        )
-    print("="*80)
+        components = analysis.get('components', {})
+        changes = analysis.get('changes', {})
 
-def process_stock(stock_info, period, interval, save_csv, save_chart, output_folder=None):
+        kumo = components.get('kumo', {}).get('contribution', 0)
+        tk = components.get('tk_cross', {}).get('contribution', 0)
+        cloud = components.get('cloud_color', {}).get('contribution', 0)
+        chikou = components.get('chikou', {}).get('contribution', 0)
+        kijun = components.get('kijun', {}).get('contribution', 0)
+        total = analysis.get('total_score', 0)
+
+        # Format values with asterisk if changed
+        kumo_str = f"{kumo:+.1f}*" if 'kumo' in changes else f"{kumo:+.1f}"
+        tk_str = f"{tk:+.1f}*" if 'tk_cross' in changes else f"{tk:+.1f}"
+        cloud_str = f"{cloud:+.1f}*" if 'cloud_color' in changes else f"{cloud:+.1f}"
+        chikou_str = f"{chikou:+.1f}*" if 'chikou' in changes else f"{chikou:+.1f}"
+        kijun_str = f"{kijun:+.1f}*" if 'kijun' in changes else f"{kijun:+.1f}"
+        total_str = f"{total:+.1f}*" if 'total' in changes else f"{total:+.1f}"
+
+        print(
+            f"{analysis['ticker']:<12} "
+            f"{kumo_str:>6} "
+            f"{tk_str:>6} "
+            f"{cloud_str:>6} "
+            f"{chikou_str:>6} "
+            f"{kijun_str:>6} "
+            f"{total_str:>7} "
+            f"{analysis['recommendation']:<15} "
+            f"${analysis['close_price']:<9.2f}"
+        )
+    print("-" * 130)
+    print("Legend: Kumo=Price vs Cloud | TK=Tenkan vs Kijun | Cloud=Future Cloud Color | Chik=Chikou Span | Kij=Price vs Kijun")
+    print("        * = value changed from previous day (ALERT)")
+    print("="*130)
+
+def process_stock(stock_info, period, interval, save_csv, save_chart, charts_folder=None, data_folder=None):
     """
     Process a single stock: download data and create chart
 
@@ -477,8 +810,10 @@ def process_stock(stock_info, period, interval, save_csv, save_chart, output_fol
         Whether to save CSV file
     save_chart : bool
         Whether to save chart
-    output_folder : str
-        Folder to save output files (default: current directory)
+    charts_folder : str
+        Folder to save chart PNG files (default: current directory)
+    data_folder : str
+        Folder to save CSV data files (default: current directory)
 
     Returns:
     --------
@@ -492,7 +827,7 @@ def process_stock(stock_info, period, interval, save_csv, save_chart, output_fol
     print("="*70)
 
     # Download stock data
-    df = download_stock(ticker, name, period=period, interval=interval, save_to_csv=save_csv, output_folder=output_folder)
+    df = download_stock(ticker, name, period=period, interval=interval, save_to_csv=save_csv, output_folder=data_folder)
 
     if df is not None:
         print("\n" + "="*50)
@@ -510,7 +845,7 @@ def process_stock(stock_info, period, interval, save_csv, save_chart, output_fol
 
         # Create and save Ichimoku chart
         if save_chart:
-            plot_ichimoku(df, ticker, name, output_folder=output_folder)
+            plot_ichimoku(df, ticker, name, output_folder=charts_folder)
 
         # Analyze Ichimoku signals
         analysis = analyze_ichimoku_signals(df, ticker, name)
@@ -524,9 +859,13 @@ def process_stock(stock_info, period, interval, save_csv, save_chart, output_fol
 def main():
     """Main function to run the script"""
 
-    # Create Output folder if it doesn't exist
+    # Create Output folder structure
     output_folder = "Output"
+    charts_folder = os.path.join(output_folder, "charts")
+    data_folder = os.path.join(output_folder, "data")
     os.makedirs(output_folder, exist_ok=True)
+    os.makedirs(charts_folder, exist_ok=True)
+    os.makedirs(data_folder, exist_ok=True)
 
     # Load configuration
     config = load_stocks_config()
@@ -555,7 +894,8 @@ def main():
     analyses = []
     for stock_info in stocks:
         try:
-            analysis = process_stock(stock_info, period, interval, save_csv, save_chart, output_folder=output_folder)
+            analysis = process_stock(stock_info, period, interval, save_csv, save_chart,
+                                     charts_folder=charts_folder, data_folder=data_folder)
             if analysis is not None:
                 analyses.append(analysis)
         except Exception as e:
