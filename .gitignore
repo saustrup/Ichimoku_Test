@@ -41,3 +41,7 @@ ichimoku_trading_report.txt
 .DS_Store
 Thumbs.db
 Output/ichimoku_report.pdf
+Output/Copenhagen/ichimoku_report_Copenhagen.pdf
+Output/Copenhagen/ichimoku_trading_report_Copenhagen.txt
+Output/NASDAQ/ichimoku_report_NASDAQ.pdf
+Output/NASDAQ/ichimoku_trading_report_NASDAQ.txt
