@@ -19,6 +19,7 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch, cm
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle, PageBreak
+from reportlab.platypus.flowables import AnchorFlowable
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 
 def download_stock(ticker, stock_name, period="1y", interval="1d", save_to_csv=True, output_folder=None):
@@ -592,6 +593,16 @@ def analyze_ichimoku_signals(df, ticker, stock_name):
 
     return analysis
 
+def get_recommendation_priority(recommendation):
+    """Return sort priority for recommendations (lower = higher priority)."""
+    priority_map = {
+        'BUY': 1,
+        'BUY (MODERATE)': 2,
+        'WAIT': 3,
+        'AVOID': 4
+    }
+    return priority_map.get(recommendation, 999)  # Unknown recommendations go last
+
 def generate_report(analyses, filename="ichimoku_trading_report.txt", output_folder=None, market_name=None, currency="USD"):
     """
     Generate a trading report based on Ichimoku analysis
@@ -922,8 +933,15 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
         kijun_str = f"{kijun:+.1f}*" if 'kijun' in changes else f"{kijun:+.1f}"
         total_str = f"{total:+.1f}*" if 'total' in changes else f"{total:+.1f}"
 
+        # Create clickable ticker link to detail section
+        dest_name = f'stock_{analysis["ticker"]}'
+        ticker_link = Paragraph(
+            f'<a href="#{dest_name}" color="blue"><u>{analysis["ticker"]}</u></a>',
+            normal_style
+        )
+
         table_data.append([
-            analysis['ticker'],
+            ticker_link,
             kumo_str,
             tk_str,
             cloud_str,
@@ -979,6 +997,10 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
     for analysis in analyses:
         ticker = analysis['ticker']
         changes = analysis.get('changes', {})
+
+        # Add anchor for linking from summary table
+        dest_name = f'stock_{ticker}'
+        content.append(AnchorFlowable(dest_name))
 
         # Stock header
         content.append(Paragraph(f"{analysis['name']} ({ticker})", heading_style))
@@ -1260,6 +1282,9 @@ def main():
             except Exception as e:
                 print(f"\n✗ Error processing {stock_info['ticker']}: {str(e)}")
                 continue
+
+        # Sort analyses by recommendation (descending priority: BUY first, then AVOID last)
+        analyses.sort(key=lambda x: get_recommendation_priority(x['recommendation']))
 
         print("\n" + "="*70)
         print(f"{market_name} STOCKS PROCESSED!")
