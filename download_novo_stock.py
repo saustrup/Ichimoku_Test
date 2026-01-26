@@ -11,6 +11,7 @@ from matplotlib.patches import Rectangle
 from datetime import datetime, timedelta
 import json
 import os
+import shutil
 
 # PDF generation imports
 from reportlab.lib import colors
@@ -1137,11 +1138,59 @@ def process_stock(stock_info, period, interval, save_csv, save_chart, charts_fol
         print(f"\n✗ Failed to process {ticker}")
         return None
 
+def archive_previous_output(base_output_folder, archive_folder):
+    """
+    Move previous output files to archive folder with timestamp
+
+    Parameters:
+    -----------
+    base_output_folder : str
+        The main output folder to archive
+    archive_folder : str
+        The archive folder to move files to
+    """
+    if not os.path.exists(base_output_folder):
+        print("No previous output to archive.")
+        return
+
+    # Check if there are any files/folders to archive
+    contents = os.listdir(base_output_folder)
+    if not contents:
+        print("Output folder is empty, nothing to archive.")
+        return
+
+    # Create archive folder if it doesn't exist
+    os.makedirs(archive_folder, exist_ok=True)
+
+    # Create timestamped subfolder in archive
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    archive_destination = os.path.join(archive_folder, f"run_{timestamp}")
+
+    print(f"\nArchiving previous output to: {archive_destination}")
+
+    # Move all contents from output to archive
+    os.makedirs(archive_destination, exist_ok=True)
+
+    for item in contents:
+        source_path = os.path.join(base_output_folder, item)
+        dest_path = os.path.join(archive_destination, item)
+        shutil.move(source_path, dest_path)
+        print(f"  Moved: {item}")
+
+    print(f"Archive complete. Output folder is now empty.\n")
+
+
 def main():
     """Main function to run the script"""
 
-    # Create base Output folder
+    # Define folders
     base_output_folder = "Output"
+    archive_folder = "Archive"
+
+    # Archive previous output before starting new run
+    archive_previous_output(base_output_folder, archive_folder)
+
+    # Create base Output folder
     os.makedirs(base_output_folder, exist_ok=True)
 
     # Load configuration

@@ -26,7 +26,7 @@
           "name": "DSV"
         },
         {
-          "ticker": "CARLB.CO",
+          "ticker": "CARL-B.CO",
           "name": "Carlsberg Group"
         },
         {
@@ -62,10 +62,6 @@
           "name": "Jyske Bank"
         },
         {
-          "ticker": "SIM.CO",
-          "name": "SimCorp"
-        },
-        {
           "ticker": "NOVO-B.CO",
           "name": "Novo Nordisk"
         },
@@ -80,14 +76,6 @@
         {
           "ticker": "AMBU-B.CO",
           "name": "Ambu"
-        },
-        {
-          "ticker": "NZYM-B.CO",
-          "name": "Novozymes"
-        },
-        {
-          "ticker": "CHR.CO",
-          "name": "Chr. Hansen"
         },
         {
           "ticker": "ALMB.CO",
@@ -167,7 +155,7 @@
         },
         {
           "ticker": "NSIS-B.CO",
-          "name": "Nilfisk"
+          "name": "Novonesis"
         },
         {
           "ticker": "NTG.CO",
