@@ -88,6 +88,94 @@
         {
           "ticker": "CHR.CO",
           "name": "Chr. Hansen"
+        },
+        {
+          "ticker": "ALMB.CO",
+          "name": "ALM Brand"
+        },
+        {
+          "ticker": "BAVA.CO",
+          "name": "Bavarian Nordic"
+        },
+        {
+          "ticker": "BIOPOR.CO",
+          "name": "Bioporto"
+        },
+        {
+          "ticker": "BO.CO",
+          "name": "Bang & Olufsen"
+        },
+        {
+          "ticker": "CBRAIN.CO",
+          "name": "cBrain"
+        },
+        {
+          "ticker": "CHEMM.CO",
+          "name": "ChemoMetec"
+        },
+        {
+          "ticker": "COLUM.CO",
+          "name": "Columbus"
+        },
+        {
+          "ticker": "DATA.CO",
+          "name": "Dataproces"
+        },
+        {
+          "ticker": "DFDS.CO",
+          "name": "DFDS"
+        },
+        {
+          "ticker": "DJUR.CO",
+          "name": "Djurslands Bank"
+        },
+        {
+          "ticker": "DNORD.CO",
+          "name": "D/S Norden"
+        },
+        {
+          "ticker": "FLS.CO",
+          "name": "FLSmidth"
+        },
+        {
+          "ticker": "HH.CO",
+          "name": "H+H International"
+        },
+        {
+          "ticker": "HLUN-A.CO",
+          "name": "H. Lundbeck"
+        },
+        {
+          "ticker": "ISS.CO",
+          "name": "ISS"
+        },
+        {
+          "ticker": "KRE.CO",
+          "name": "Kreditbanken"
+        },
+        {
+          "ticker": "MATAS.CO",
+          "name": "Matas"
+        },
+        {
+          "ticker": "NETC.CO",
+          "name": "NetCompany"
+        },
+        {
+          "ticker": "NKT.CO",
+          "name": "NKT"
+        },
+        {
+          "ticker": "NSIS-B.CO",
+          "name": "Nilfisk"
+        },
+        {
+          "ticker": "NTG.CO",
+          "name": "NTG Nordic Transport"
+        },
+        {
+          "ticker": "PARKEN.CO",
+          "name": "Parken Sport & Entertainment"
         }
       ]
     },
