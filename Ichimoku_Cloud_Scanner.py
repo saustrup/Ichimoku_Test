@@ -909,6 +909,7 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
     content.append(Spacer(1, 0.5*inch))
 
     # Summary table
+    content.append(AnchorFlowable('summary_table'))
     content.append(Paragraph("SUMMARY TABLE (* = changed from previous day)", heading_style))
 
     # Build table data
@@ -1001,6 +1002,13 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
         # Add anchor for linking from summary table
         dest_name = f'stock_{ticker}'
         content.append(AnchorFlowable(dest_name))
+
+        # Back to summary link
+        content.append(Paragraph(
+            '<a href="#summary_table" color="blue"><u>&lt;&lt; Back to Summary Table</u></a>',
+            normal_style
+        ))
+        content.append(Spacer(1, 0.1*inch))
 
         # Stock header
         content.append(Paragraph(f"{analysis['name']} ({ticker})", heading_style))
