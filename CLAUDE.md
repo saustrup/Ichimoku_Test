@@ -20,7 +20,7 @@ There is no test suite, linter, or build system configured.
 
 ## Architecture
 
-**Single-script application** (`Ichimoku_Cloud_Scanner.py`, ~1300 lines) with a functional pipeline:
+**Single-script application** (`Ichimoku_Cloud_Scanner.py`, ~1700 lines) with a functional pipeline:
 
 1. **Config loading** — reads `stocks_config.json` for market definitions and settings
 2. **Archive** — moves previous `Output/` to `Archive/run_<YYYYMMDD_HHMMSS>/` before each run
@@ -35,30 +35,49 @@ Individual stock processing is wrapped in try/except so a single ticker failure 
 | Function | Purpose |
 |---|---|
 | `download_stock()` | Downloads historical data via yfinance, optionally saves CSV |
-| `calculate_ichimoku()` | Computes 5 Ichimoku indicators (Tenkan, Kijun, Senkou A/B, Chikou) |
-| `plot_ichimoku()` | Generates 16x9 PNG candlestick charts with Ichimoku overlay (300 DPI) |
+| `calculate_ichimoku()` | Computes 5 Ichimoku indicators + enhancement columns (volume ratio, cloud thickness, Kijun distance, flat line detection, future Senkou values) |
+| `plot_ichimoku()` | Generates 16x9 PNG candlestick charts with Ichimoku overlay + SL/TP target lines (300 DPI) |
 | `load_stocks_config()` | Loads and returns `stocks_config.json` |
-| `analyze_single_day()` | Analyzes Ichimoku signals for a specific day (used for day-over-day comparison) |
-| `analyze_ichimoku_signals()` | Main signal analysis: composite score, component change tracking, recommendation |
+| `analyze_single_day()` | Analyzes Ichimoku signals for a specific day — returns 5 core + 6 enhancement component values |
+| `analyze_ichimoku_signals()` | Main signal analysis: composite score, enhancements, confidence score, trade targets, recommendation |
 | `get_recommendation_priority()` | Sorting helper — BUY=1, BUY MODERATE=2, WAIT=3, AVOID=4 |
 | `generate_report()` | Text report with summary table and per-stock component breakdown |
 | `generate_pdf_report()` | PDF with clickable TOC, color-coded recommendations, embedded charts |
-| `process_stock()` | Orchestrates single stock: download → calculate → chart → analyze |
+| `process_stock()` | Orchestrates single stock: download → calculate → analyze → chart (analysis before chart for trade target lines) |
 | `archive_previous_output()` | Moves `Output/` to `Archive/run_<timestamp>/` |
 | `main()` | Entry point: archive → load config → process markets → generate reports |
 
 ### Signal Scoring System
 
-Each stock gets a composite score (-8 to +8) from five components:
-- **Kumo** (price vs cloud): +2 pts
-- **TK Cross** (Tenkan vs Kijun): +1 pt
-- **Cloud Color** (Senkou A vs B): +1 pt
-- **Chikou Span** (lagging): +2/+1/+0.5 pts
-- **Kijun Support**: +1 pt
+**Two-tier architecture**: a core scoring layer (5 components) and an enhancement layer (6 signals).
 
-Score maps to: BUY (strong), BUY MODERATE, WAIT, or AVOID. Results are sorted by recommendation priority before reporting.
+#### Core Components (composite score -8 to +7)
+- **Kumo** (price vs cloud): ±2 pts
+- **TK Cross** (Tenkan vs Kijun): ±1 pt
+- **Cloud Color** (Senkou A vs B): ±1 pt
+- **Chikou Span** (lagging): ±2/±1/±0.5 pts
+- **Kijun Support**: ±1 pt
 
-Day-over-day signal change tracking compares each component against the previous trading day, recording change direction (up/down arrows), previous values, and marking shifted components with asterisks. Changed stocks get yellow highlighting in the PDF.
+Core score maps to: BUY (strong), BUY MODERATE, WAIT, or AVOID via trend + strength heuristic.
+
+#### Enhancement Signals (separate layer, does not change core score)
+- **Volume Confirmation**: ≥1.5x 20-day avg confirms trend (±1), ≤0.5x = weak conviction (-0.5)
+- **Kumo Twist**: Senkou A/B crossover signals major trend change (±1)
+- **Cloud Thickness**: thin <1% = weak S/R, thick >4% = strong S/R (±1)
+- **TK Cross Location**: bullish cross above cloud = strong (+1), inside cloud = weak (0)
+- **Kijun Distance**: overextension >8% = risk (-1), >5% = mild (-0.5)
+- **Flat Lines**: both Kijun+Tenkan flat = consolidation (-0.5)
+
+#### Confidence Score
+Percentage of all 11 signals (5 core + 6 enhancements) agreeing on direction. Labels: HIGH (≥80%), MODERATE (50-79%), LOW (<50%). High confidence can upgrade BUY MODERATE → BUY; low confidence can downgrade BUY → BUY MODERATE.
+
+#### Trade Targets
+- **Stop-loss primary**: Kijun-sen (if price above), else cloud bottom
+- **Take-profit 1**: 1:1 risk/reward from stop-loss distance
+- **Take-profit 2**: 1:2 risk/reward from stop-loss distance
+- **Overextension warning**: flagged when price >8% from Kijun
+
+Day-over-day signal change tracking compares all 11 signals against the previous trading day, recording change direction (up/down arrows), previous values, and marking shifted components with asterisks. Changed stocks get yellow highlighting in the PDF.
 
 ### Key Configuration: `stocks_config.json`
 

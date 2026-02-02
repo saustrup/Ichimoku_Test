@@ -6,7 +6,12 @@
       "Bash(git add:*)",
       "Bash(git commit -m \"$\\(cat <<''EOF''\nInitial commit: Stock Ichimoku Cloud Analysis Tool\n\n- Add main Python script for stock data download and analysis\n- Implement Ichimoku Cloud chart generation with candlesticks\n- Add automated trading signal analysis\n- Include JSON configuration for 25 stocks \\(US + Danish\\)\n- Generate comprehensive trading reports\n- Add README with usage instructions\n- Add requirements.txt for dependencies\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
       "Bash(cd:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nClean up terminal output with concise progress lines and update CLAUDE.md\n\nReplace verbose per-stock banners, summary statistics, and dataframe dumps\nwith compact [N/M] progress lines showing ticker and recommendation.\nAdd success/failure counts per market and report generation status.\nUpdate CLAUDE.md with full function reference, config schema, and known issues.\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(python:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nSimplify .gitignore by ignoring Output/ and Archive/ directories\n\nReplace ~40 individual file entries with directory-level ignores.\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push)",
+      "Bash(git commit:*)"
     ]
   }
 }

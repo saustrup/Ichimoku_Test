@@ -100,9 +100,30 @@ def calculate_ichimoku(df):
     # Chikou Span (Lagging Span): Close plotted 26 periods in the past
     df['chikou_span'] = df['Close'].shift(-26)
 
+    # --- Enhancement indicator columns ---
+
+    # Volume analysis: 20-day SMA and ratio
+    df['volume_sma_20'] = df['Volume'].rolling(window=20).mean()
+    df['volume_ratio'] = df['Volume'] / df['volume_sma_20']
+
+    # Cloud thickness (absolute and as percentage of price)
+    df['cloud_thickness'] = abs(df['senkou_span_a'] - df['senkou_span_b'])
+    df['cloud_thickness_pct'] = (df['cloud_thickness'] / df['Close']) * 100
+
+    # Price distance from Kijun-sen as percentage
+    df['kijun_distance_pct'] = ((df['Close'] - df['kijun_sen']) / df['kijun_sen']) * 100
+
+    # Flat line detection: 5-period rolling std dev
+    df['kijun_flat'] = df['kijun_sen'].rolling(window=5).std()
+    df['tenkan_flat'] = df['tenkan_sen'].rolling(window=5).std()
+
+    # Unshifted (future) Senkou values for Kumo twist detection
+    df['future_senkou_a'] = (df['tenkan_sen'] + df['kijun_sen']) / 2
+    df['future_senkou_b'] = (df['High'].rolling(window=52).max() + df['Low'].rolling(window=52).min()) / 2
+
     return df
 
-def plot_ichimoku(df, ticker, stock_name, filename=None, output_folder=None):
+def plot_ichimoku(df, ticker, stock_name, filename=None, output_folder=None, analysis=None):
     """
     Create Ichimoku Cloud chart and save as PNG
 
@@ -118,6 +139,8 @@ def plot_ichimoku(df, ticker, stock_name, filename=None, output_folder=None):
         Output filename for the PNG (default: auto-generated)
     output_folder : str
         Folder to save output files (default: current directory)
+    analysis : dict
+        Analysis results with trade targets (optional)
     """
 
     if filename is None:
@@ -209,6 +232,33 @@ def plot_ichimoku(df, ticker, stock_name, filename=None, output_folder=None):
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
     ax.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
     plt.xticks(rotation=45, ha='right')
+
+    # Draw trade target lines (if analysis provided)
+    if analysis and analysis.get('trade_targets'):
+        targets = analysis['trade_targets']
+        last_date = df.index[-1]
+        date_range_start = df.index[int(len(df) * 0.8)]
+
+        if targets.get('stop_loss_primary'):
+            ax.hlines(y=targets['stop_loss_primary'], xmin=date_range_start, xmax=last_date,
+                      colors='red', linestyles='dashed', linewidth=1.2, alpha=0.8, zorder=4)
+            ax.annotate('SL', xy=(last_date, targets['stop_loss_primary']),
+                        fontsize=8, color='red', fontweight='bold',
+                        xytext=(5, 0), textcoords='offset points')
+
+        if targets.get('take_profit_1'):
+            ax.hlines(y=targets['take_profit_1'], xmin=date_range_start, xmax=last_date,
+                      colors='green', linestyles='dashed', linewidth=1.2, alpha=0.8, zorder=4)
+            ax.annotate('TP1', xy=(last_date, targets['take_profit_1']),
+                        fontsize=8, color='green', fontweight='bold',
+                        xytext=(5, 0), textcoords='offset points')
+
+        if targets.get('take_profit_2'):
+            ax.hlines(y=targets['take_profit_2'], xmin=date_range_start, xmax=last_date,
+                      colors='darkgreen', linestyles='dotted', linewidth=1, alpha=0.6, zorder=4)
+            ax.annotate('TP2', xy=(last_date, targets['take_profit_2']),
+                        fontsize=8, color='darkgreen',
+                        xytext=(5, 0), textcoords='offset points')
 
     # Tight layout
     plt.tight_layout()
@@ -347,6 +397,89 @@ def analyze_single_day(df, day_idx, chikou_offset):
     else:
         components['kijun'] = 0
 
+    # --- Enhancement signals ---
+
+    # Enhancement 1: Volume confirmation
+    if 'volume_ratio' in day_data.index and pd.notna(day_data.get('volume_ratio')):
+        vol_ratio = day_data['volume_ratio']
+        trend_score = components.get('kumo', 0) + components.get('tk_cross', 0)
+        if vol_ratio >= 1.5:
+            components['volume_confirm'] = 1 if trend_score > 0 else (-1 if trend_score < 0 else 0)
+        elif vol_ratio <= 0.5:
+            components['volume_confirm'] = -0.5
+        else:
+            components['volume_confirm'] = 0
+    else:
+        components['volume_confirm'] = 0
+
+    # Enhancement 2: Kumo twist detection
+    components['kumo_twist'] = 0
+    if ('future_senkou_a' in day_data.index and 'future_senkou_b' in day_data.index
+            and pd.notna(day_data.get('future_senkou_a')) and pd.notna(day_data.get('future_senkou_b'))):
+        actual_idx = len(df) + day_idx if day_idx < 0 else day_idx
+        if actual_idx > 0:
+            prev_data = df.iloc[actual_idx - 1]
+            if (pd.notna(prev_data.get('future_senkou_a')) and pd.notna(prev_data.get('future_senkou_b'))):
+                prev_diff = prev_data['future_senkou_a'] - prev_data['future_senkou_b']
+                curr_diff = day_data['future_senkou_a'] - day_data['future_senkou_b']
+                # Only trigger if sign change AND meaningful difference (>0.1% of price)
+                if prev_diff * curr_diff < 0 and abs(curr_diff) > day_data['Close'] * 0.001:
+                    components['kumo_twist'] = 1 if curr_diff > 0 else -1
+
+    # Enhancement 3: Cloud thickness
+    if 'cloud_thickness_pct' in day_data.index and pd.notna(day_data.get('cloud_thickness_pct')):
+        thickness = day_data['cloud_thickness_pct']
+        kumo_direction = components.get('kumo', 0)
+        if thickness < 1.0:
+            components['cloud_thickness'] = 0
+        elif thickness > 4.0:
+            components['cloud_thickness'] = 1 if kumo_direction > 0 else (-1 if kumo_direction < 0 else 0)
+        else:
+            components['cloud_thickness'] = 0.5 if kumo_direction > 0 else (-0.5 if kumo_direction < 0 else 0)
+    else:
+        components['cloud_thickness'] = 0
+
+    # Enhancement 4: TK cross location relative to cloud
+    if (pd.notna(day_data.get('tenkan_sen')) and pd.notna(day_data.get('kijun_sen'))
+            and pd.notna(day_data.get('senkou_span_a')) and pd.notna(day_data.get('senkou_span_b'))):
+        tk_midpoint = (day_data['tenkan_sen'] + day_data['kijun_sen']) / 2
+        cloud_top = max(day_data['senkou_span_a'], day_data['senkou_span_b'])
+        cloud_bottom = min(day_data['senkou_span_a'], day_data['senkou_span_b'])
+        tk_dir = components.get('tk_cross', 0)
+        if tk_dir > 0 and tk_midpoint > cloud_top:
+            components['tk_location'] = 1
+        elif tk_dir < 0 and tk_midpoint < cloud_bottom:
+            components['tk_location'] = -1
+        else:
+            components['tk_location'] = 0
+    else:
+        components['tk_location'] = 0
+
+    # Enhancement 5: Kijun distance (overextension)
+    if 'kijun_distance_pct' in day_data.index and pd.notna(day_data.get('kijun_distance_pct')):
+        dist = day_data['kijun_distance_pct']
+        if abs(dist) > 8.0:
+            components['kijun_distance'] = -1
+        elif abs(dist) > 5.0:
+            components['kijun_distance'] = -0.5
+        else:
+            components['kijun_distance'] = 0
+    else:
+        components['kijun_distance'] = 0
+
+    # Enhancement 6: Flat Kijun/Tenkan detection
+    components['flat_lines'] = 0
+    if 'kijun_flat' in day_data.index and pd.notna(day_data.get('kijun_flat')):
+        threshold = day_data['Close'] * 0.001
+        kijun_is_flat = day_data['kijun_flat'] < threshold
+        tenkan_is_flat = ('tenkan_flat' in day_data.index
+                          and pd.notna(day_data.get('tenkan_flat'))
+                          and day_data['tenkan_flat'] < threshold)
+        if kijun_is_flat and tenkan_is_flat:
+            components['flat_lines'] = -0.5
+        elif kijun_is_flat:
+            components['flat_lines'] = -0.25
+
     return components
 
 
@@ -387,11 +520,15 @@ def analyze_ichimoku_signals(df, ticker, stock_name):
         'close_price': latest['Close'],
         'signals': [],
         'components': {},  # Store each Ichimoku component's contribution
+        'enhancements': {},  # Enhancement signal layer
         'prev_components': prev_day_components,  # Store previous day for comparison
         'changes': {},  # Track which components changed
         'trend': 'NEUTRAL',
         'strength': 'WEAK',
-        'recommendation': 'HOLD'
+        'recommendation': 'HOLD',
+        'confidence_score': 0,
+        'confidence_label': '',
+        'trade_targets': {},
     }
 
     # Component 1: Price vs Cloud (Kumo)
@@ -534,12 +671,223 @@ def analyze_ichimoku_signals(df, ticker, stock_name):
             component_kijun['contribution'] = -1
     analysis['components']['kijun'] = component_kijun
 
+    # --- Enhancement signals ---
+
+    # Enhancement 1: Volume Confirmation
+    enh_volume = {'name': 'Volume Confirmation', 'signal': 'NEUTRAL', 'description': '', 'contribution': 0}
+    if 'volume_ratio' in latest.index and pd.notna(latest.get('volume_ratio')) and pd.notna(latest.get('volume_sma_20')):
+        vol_ratio = latest['volume_ratio']
+        vol_sma = latest['volume_sma_20']
+        trend_direction = 1 if analysis['trend'] == 'BULLISH' else (-1 if analysis['trend'] == 'BEARISH' else 0)
+
+        if vol_ratio >= 1.5:
+            if trend_direction > 0:
+                enh_volume['signal'] = 'CONFIRMS BULLISH'
+                enh_volume['description'] = f"Volume {latest['Volume']:.0f} is {vol_ratio:.1f}x above 20-day avg {vol_sma:.0f} — confirms bullish move"
+                enh_volume['contribution'] = 1
+            elif trend_direction < 0:
+                enh_volume['signal'] = 'CONFIRMS BEARISH'
+                enh_volume['description'] = f"Volume {latest['Volume']:.0f} is {vol_ratio:.1f}x above 20-day avg {vol_sma:.0f} — confirms bearish pressure"
+                enh_volume['contribution'] = -1
+            else:
+                enh_volume['signal'] = 'HIGH VOLUME'
+                enh_volume['description'] = f"Volume {latest['Volume']:.0f} is {vol_ratio:.1f}x above 20-day avg {vol_sma:.0f} — no clear trend"
+                enh_volume['contribution'] = 0
+        elif vol_ratio <= 0.5:
+            enh_volume['signal'] = 'LOW CONVICTION'
+            enh_volume['description'] = f"Volume {latest['Volume']:.0f} is only {vol_ratio:.1f}x of 20-day avg {vol_sma:.0f} — weak conviction"
+            enh_volume['contribution'] = -0.5
+        else:
+            enh_volume['signal'] = 'NORMAL'
+            enh_volume['description'] = f"Volume {latest['Volume']:.0f} is {vol_ratio:.1f}x of 20-day avg {vol_sma:.0f}"
+            enh_volume['contribution'] = 0
+    else:
+        enh_volume['description'] = "Volume data unavailable"
+    analysis['enhancements']['volume_confirm'] = enh_volume
+
+    # Enhancement 2: Kumo Twist Detection
+    enh_twist = {'name': 'Kumo Twist', 'signal': 'NONE', 'description': 'No Kumo twist detected', 'contribution': 0}
+    if ('future_senkou_a' in latest.index and 'future_senkou_b' in latest.index
+            and pd.notna(latest.get('future_senkou_a')) and pd.notna(latest.get('future_senkou_b')) and len(df) >= 2):
+        prev = df.iloc[-2]
+        if pd.notna(prev.get('future_senkou_a')) and pd.notna(prev.get('future_senkou_b')):
+            prev_diff = prev['future_senkou_a'] - prev['future_senkou_b']
+            curr_diff = latest['future_senkou_a'] - latest['future_senkou_b']
+            if prev_diff * curr_diff < 0 and abs(curr_diff) > latest['Close'] * 0.001:
+                if curr_diff > 0:
+                    enh_twist['signal'] = 'BULLISH TWIST'
+                    enh_twist['description'] = "Senkou A crossing above Senkou B — future cloud turning bullish"
+                    enh_twist['contribution'] = 1
+                else:
+                    enh_twist['signal'] = 'BEARISH TWIST'
+                    enh_twist['description'] = "Senkou A crossing below Senkou B — future cloud turning bearish"
+                    enh_twist['contribution'] = -1
+    analysis['enhancements']['kumo_twist'] = enh_twist
+
+    # Enhancement 3: Cloud Thickness
+    enh_thickness = {'name': 'Cloud Thickness', 'signal': 'NEUTRAL', 'description': '', 'contribution': 0}
+    if ('cloud_thickness_pct' in latest.index and pd.notna(latest.get('cloud_thickness_pct'))
+            and pd.notna(latest.get('cloud_thickness'))):
+        thickness_pct = latest['cloud_thickness_pct']
+        thickness_abs = latest['cloud_thickness']
+        kumo_contribution = analysis['components']['kumo']['contribution']
+
+        if thickness_pct < 1.0:
+            enh_thickness['signal'] = 'THIN CLOUD'
+            enh_thickness['description'] = f"Cloud thickness {thickness_pct:.1f}% of price ({thickness_abs:.2f}) — weak support/resistance"
+            enh_thickness['contribution'] = 0
+        elif thickness_pct > 4.0:
+            if kumo_contribution > 0:
+                enh_thickness['signal'] = 'STRONG SUPPORT'
+                enh_thickness['description'] = f"Cloud thickness {thickness_pct:.1f}% of price ({thickness_abs:.2f}) — strong support below"
+                enh_thickness['contribution'] = 1
+            elif kumo_contribution < 0:
+                enh_thickness['signal'] = 'STRONG RESISTANCE'
+                enh_thickness['description'] = f"Cloud thickness {thickness_pct:.1f}% of price ({thickness_abs:.2f}) — strong resistance above"
+                enh_thickness['contribution'] = -1
+            else:
+                enh_thickness['signal'] = 'THICK CLOUD'
+                enh_thickness['description'] = f"Cloud thickness {thickness_pct:.1f}% of price ({thickness_abs:.2f}) — price inside thick cloud"
+                enh_thickness['contribution'] = 0
+        else:
+            enh_thickness['signal'] = 'MODERATE'
+            enh_thickness['description'] = f"Cloud thickness {thickness_pct:.1f}% of price ({thickness_abs:.2f})"
+            enh_thickness['contribution'] = 0.5 if kumo_contribution > 0 else (-0.5 if kumo_contribution < 0 else 0)
+    else:
+        enh_thickness['description'] = "Cloud thickness data unavailable"
+    analysis['enhancements']['cloud_thickness'] = enh_thickness
+
+    # Enhancement 4: TK Cross Location
+    enh_tk_loc = {'name': 'TK Cross Location', 'signal': 'NEUTRAL', 'description': '', 'contribution': 0}
+    if (pd.notna(latest['tenkan_sen']) and pd.notna(latest['kijun_sen'])
+            and pd.notna(latest['senkou_span_a']) and pd.notna(latest['senkou_span_b'])):
+        tk_midpoint = (latest['tenkan_sen'] + latest['kijun_sen']) / 2
+        cloud_top = max(latest['senkou_span_a'], latest['senkou_span_b'])
+        cloud_bottom = min(latest['senkou_span_a'], latest['senkou_span_b'])
+        tk_direction = analysis['components']['tk_cross']['contribution']
+
+        if tk_direction > 0 and tk_midpoint > cloud_top:
+            enh_tk_loc['signal'] = 'ABOVE CLOUD'
+            enh_tk_loc['description'] = f"Bullish TK cross above cloud — strong bullish signal"
+            enh_tk_loc['contribution'] = 1
+        elif tk_direction < 0 and tk_midpoint < cloud_bottom:
+            enh_tk_loc['signal'] = 'BELOW CLOUD'
+            enh_tk_loc['description'] = f"Bearish TK cross below cloud — strong bearish signal"
+            enh_tk_loc['contribution'] = -1
+        elif cloud_bottom <= tk_midpoint <= cloud_top:
+            enh_tk_loc['signal'] = 'INSIDE CLOUD'
+            enh_tk_loc['description'] = f"TK cross inside cloud — weakened signal"
+            enh_tk_loc['contribution'] = 0
+        else:
+            enh_tk_loc['description'] = f"TK cross outside cloud, direction mixed"
+            enh_tk_loc['contribution'] = 0
+    else:
+        enh_tk_loc['description'] = "TK/Cloud data unavailable"
+    analysis['enhancements']['tk_location'] = enh_tk_loc
+
+    # Enhancement 5: Price-to-Kijun Distance (Overextension)
+    enh_dist = {'name': 'Kijun Distance', 'signal': 'NEUTRAL', 'description': '', 'contribution': 0}
+    if 'kijun_distance_pct' in latest.index and pd.notna(latest.get('kijun_distance_pct')):
+        dist = latest['kijun_distance_pct']
+        if dist > 8.0:
+            enh_dist['signal'] = 'OVEREXTENDED LONG'
+            enh_dist['description'] = f"Price is {dist:.1f}% above Kijun — high risk of pullback"
+            enh_dist['contribution'] = -1
+        elif dist > 5.0:
+            enh_dist['signal'] = 'STRETCHED LONG'
+            enh_dist['description'] = f"Price is {dist:.1f}% above Kijun — mildly overextended"
+            enh_dist['contribution'] = -0.5
+        elif dist < -8.0:
+            enh_dist['signal'] = 'OVEREXTENDED SHORT'
+            enh_dist['description'] = f"Price is {abs(dist):.1f}% below Kijun — may bounce"
+            enh_dist['contribution'] = 0.5
+        elif dist < -5.0:
+            enh_dist['signal'] = 'STRETCHED SHORT'
+            enh_dist['description'] = f"Price is {abs(dist):.1f}% below Kijun — mildly oversold"
+            enh_dist['contribution'] = 0.25
+        else:
+            enh_dist['signal'] = 'NORMAL RANGE'
+            enh_dist['description'] = f"Price is {dist:+.1f}% from Kijun — normal range"
+            enh_dist['contribution'] = 0
+    else:
+        enh_dist['description'] = "Kijun distance data unavailable"
+    analysis['enhancements']['kijun_distance'] = enh_dist
+
+    # Enhancement 6: Flat Line Detection
+    enh_flat = {'name': 'Flat Lines', 'signal': 'NONE', 'description': 'No flat lines — normal momentum', 'contribution': 0}
+    if 'kijun_flat' in latest.index and pd.notna(latest.get('kijun_flat')):
+        threshold = latest['Close'] * 0.001
+        kijun_is_flat = latest['kijun_flat'] < threshold
+        tenkan_is_flat = ('tenkan_flat' in latest.index
+                          and pd.notna(latest.get('tenkan_flat'))
+                          and latest['tenkan_flat'] < threshold)
+        if kijun_is_flat and tenkan_is_flat:
+            enh_flat['signal'] = 'CONSOLIDATION'
+            enh_flat['description'] = "Both Kijun and Tenkan flat — strong consolidation, expect breakout"
+            enh_flat['contribution'] = -0.5
+        elif kijun_is_flat:
+            enh_flat['signal'] = 'KIJUN FLAT'
+            enh_flat['description'] = "Kijun-sen flat — price consolidating around base line"
+            enh_flat['contribution'] = -0.25
+        elif tenkan_is_flat:
+            enh_flat['signal'] = 'TENKAN FLAT'
+            enh_flat['description'] = "Tenkan-sen flat — short-term momentum stalling"
+            enh_flat['contribution'] = 0
+    analysis['enhancements']['flat_lines'] = enh_flat
+
+    # --- Confidence Score ---
+    all_contributions = [c['contribution'] for c in analysis['components'].values()]
+    all_contributions += [e['contribution'] for e in analysis['enhancements'].values()]
+    bullish_count = sum(1 for c in all_contributions if c > 0)
+    bearish_count = sum(1 for c in all_contributions if c < 0)
+    non_neutral_count = bullish_count + bearish_count
+    if non_neutral_count > 0:
+        analysis['confidence_score'] = round(max(bullish_count, bearish_count) / non_neutral_count * 100)
+    else:
+        analysis['confidence_score'] = 0
+    if analysis['confidence_score'] >= 80:
+        analysis['confidence_label'] = 'HIGH'
+    elif analysis['confidence_score'] >= 50:
+        analysis['confidence_label'] = 'MODERATE'
+    else:
+        analysis['confidence_label'] = 'LOW'
+
+    # --- Trade Targets ---
+    trade_targets = {}
+    if pd.notna(latest['kijun_sen']):
+        trade_targets['stop_loss_kijun'] = latest['kijun_sen']
+    if pd.notna(latest['senkou_span_a']) and pd.notna(latest['senkou_span_b']):
+        cloud_bottom = min(latest['senkou_span_a'], latest['senkou_span_b'])
+        cloud_top = max(latest['senkou_span_a'], latest['senkou_span_b'])
+        trade_targets['stop_loss_cloud'] = cloud_bottom
+        trade_targets['resistance_cloud'] = cloud_top
+
+    # Primary stop-loss: Kijun if price above it, else cloud bottom
+    if latest['Close'] > latest.get('kijun_sen', 0):
+        trade_targets['stop_loss_primary'] = trade_targets.get('stop_loss_kijun', trade_targets.get('stop_loss_cloud'))
+    else:
+        trade_targets['stop_loss_primary'] = trade_targets.get('stop_loss_cloud', trade_targets.get('stop_loss_kijun'))
+
+    # Take-profit targets (only meaningful for longs where price > stop-loss)
+    if trade_targets.get('stop_loss_primary'):
+        risk = latest['Close'] - trade_targets['stop_loss_primary']
+        if risk > 0:
+            trade_targets['take_profit_1'] = latest['Close'] + risk        # 1:1 R:R
+            trade_targets['take_profit_2'] = latest['Close'] + (risk * 2)  # 1:2 R:R
+
+    # Overextension flag
+    if 'kijun_distance_pct' in latest.index and pd.notna(latest.get('kijun_distance_pct')):
+        trade_targets['kijun_distance_pct'] = latest['kijun_distance_pct']
+        trade_targets['overextended'] = abs(latest['kijun_distance_pct']) > 8.0
+    analysis['trade_targets'] = trade_targets
+
     # Calculate total score
     total_score = sum(c['contribution'] for c in analysis['components'].values())
     analysis['total_score'] = total_score
 
     # Compare with previous day and mark changes
     if prev_day_components:
+        # Core components
         for comp_key in ['kumo', 'tk_cross', 'cloud_color', 'chikou', 'kijun']:
             current_val = analysis['components'].get(comp_key, {}).get('contribution', 0)
             prev_val = prev_day_components.get(comp_key, 0)
@@ -549,10 +897,21 @@ def analyze_ichimoku_signals(df, ticker, stock_name):
                     'current': current_val,
                     'direction': 'up' if current_val > prev_val else 'down'
                 }
+        # Enhancement signals
+        for enh_key in ['volume_confirm', 'kumo_twist', 'cloud_thickness', 'tk_location', 'kijun_distance', 'flat_lines']:
+            current_val = analysis['enhancements'].get(enh_key, {}).get('contribution', 0)
+            prev_val = prev_day_components.get(enh_key, 0)
+            if current_val != prev_val:
+                analysis['changes'][enh_key] = {
+                    'prev': prev_val,
+                    'current': current_val,
+                    'direction': 'up' if current_val > prev_val else 'down'
+                }
 
-    # Calculate previous total score for comparison
+    # Calculate previous total score for comparison (core 5 components only)
     if prev_day_components:
-        prev_total = sum(prev_day_components.values())
+        core_keys = ['kumo', 'tk_cross', 'cloud_color', 'chikou', 'kijun']
+        prev_total = sum(prev_day_components.get(k, 0) for k in core_keys)
         analysis['prev_total_score'] = prev_total
         if total_score != prev_total:
             analysis['changes']['total'] = {
@@ -572,6 +931,14 @@ def analyze_ichimoku_signals(df, ticker, stock_name):
         analysis['recommendation'] = 'WAIT'
     elif analysis['trend'] == 'BEARISH':
         analysis['recommendation'] = 'AVOID'
+
+    # Confidence-based recommendation adjustment
+    if analysis['recommendation'] == 'BUY (MODERATE)' and analysis['confidence_score'] >= 85:
+        analysis['recommendation'] = 'BUY'
+        analysis['recommendation_note'] = 'Upgraded from BUY (MODERATE) — high signal confidence'
+    elif analysis['recommendation'] == 'BUY' and analysis['confidence_score'] < 40:
+        analysis['recommendation'] = 'BUY (MODERATE)'
+        analysis['recommendation_note'] = 'Downgraded from BUY — low signal confidence'
 
     return analysis
 
@@ -633,21 +1000,34 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
     report_lines.append("   - BUY (MODERATE): Good bullish signals - consider long entry")
     report_lines.append("   - WAIT: Weak or neutral signals - wait for better setup")
     report_lines.append("   - AVOID: Bearish signals - not suitable for long entry")
+    report_lines.append("")
+    report_lines.append("ENHANCEMENT SIGNALS:")
+    report_lines.append("   - Volume Confirmation: confirms/weakens trend based on 20-day volume average")
+    report_lines.append("   - Kumo Twist: Senkou A/B crossover signals major trend change")
+    report_lines.append("   - Cloud Thickness: thin cloud = weak S/R, thick = strong S/R")
+    report_lines.append("   - TK Cross Location: TK cross above cloud = strong, inside = weak")
+    report_lines.append("   - Kijun Distance: overextension risk when price deviates >8% from Kijun")
+    report_lines.append("   - Flat Lines: flat Kijun/Tenkan indicates consolidation phase")
+    report_lines.append("")
+    report_lines.append("CONFIDENCE SCORE:")
+    report_lines.append("   Percentage of all signals (11 total) agreeing on direction")
+    report_lines.append("   HIGH (>=80%) | MODERATE (50-79%) | LOW (<50%)")
     report_lines.append("="*80)
     report_lines.append("")
 
     # Summary table with component breakdown
     report_lines.append("SUMMARY TABLE (* = changed from previous day):")
-    report_lines.append("-" * 130)
+    report_lines.append("-" * 155)
     report_lines.append(
         f"{'Ticker':<12} {'Kumo':>6} {'TK':>6} {'Cloud':>6} {'Chik':>6} {'Kij':>6} "
-        f"{'Score':>7} {'Long Entry':<15} {'Price':<10}"
+        f"{'Score':>7} {'Conf':>5} {'Long Entry':<15} {'Price':>10} {'SL':>10} {'TP1':>10}"
     )
-    report_lines.append("-" * 130)
+    report_lines.append("-" * 155)
 
     for analysis in analyses:
         components = analysis.get('components', {})
         changes = analysis.get('changes', {})
+        targets = analysis.get('trade_targets', {})
 
         kumo = components.get('kumo', {}).get('contribution', 0)
         tk = components.get('tk_cross', {}).get('contribution', 0)
@@ -663,6 +1043,9 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
         chikou_str = f"*{chikou:+.1f}" if 'chikou' in changes else f"{chikou:+.1f}"
         kijun_str = f"*{kijun:+.1f}" if 'kijun' in changes else f"{kijun:+.1f}"
         total_str = f"*{total:+.1f}" if 'total' in changes else f"{total:+.1f}"
+        conf_str = f"{analysis.get('confidence_score', 0)}%"
+        sl_str = f"{targets['stop_loss_primary']:.2f}" if targets.get('stop_loss_primary') else "N/A"
+        tp1_str = f"{targets['take_profit_1']:.2f}" if targets.get('take_profit_1') else "N/A"
 
         report_lines.append(
             f"{analysis['ticker']:<12} "
@@ -672,14 +1055,17 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
             f"{chikou_str:>6} "
             f"{kijun_str:>6} "
             f"{total_str:>7} "
+            f"{conf_str:>5} "
             f"{analysis['recommendation']:<15} "
-            f"${analysis['close_price']:<9.2f}"
+            f"{analysis['close_price']:>10.2f} "
+            f"{sl_str:>10} "
+            f"{tp1_str:>10}"
         )
 
-    report_lines.append("-" * 130)
+    report_lines.append("-" * 155)
     report_lines.append("Legend: Kumo=Price vs Cloud | TK=Tenkan vs Kijun | Cloud=Future Cloud Color | Chik=Chikou Span | Kij=Price vs Kijun")
-    report_lines.append("        * = value changed from previous day (ALERT)")
-    report_lines.append("="*130)
+    report_lines.append("        Conf=Signal Confidence | SL=Stop-Loss | TP1=Take-Profit Target 1 | * = changed from previous day")
+    report_lines.append("="*155)
     report_lines.append("")
 
     # Detailed analysis for each stock
@@ -743,6 +1129,54 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
                 report_lines.append(f"    Contribution: {indicator}{abs(comp['contribution']):.1f}{change_info}")
                 report_lines.append("")
 
+        # Enhancement signals
+        report_lines.append("ENHANCEMENT SIGNALS:")
+        report_lines.append("-" * 80)
+        enhancement_order = ['volume_confirm', 'kumo_twist', 'cloud_thickness',
+                             'tk_location', 'kijun_distance', 'flat_lines']
+        for enh_key in enhancement_order:
+            if enh_key in analysis.get('enhancements', {}):
+                enh = analysis['enhancements'][enh_key]
+                changed_marker = ""
+                change_info = ""
+                if enh_key in changes:
+                    changed_marker = " *CHANGED*"
+                    prev_val = changes[enh_key]['prev']
+                    direction = changes[enh_key]['direction']
+                    arrow = "↑" if direction == 'up' else "↓"
+                    change_info = f" (was {prev_val:+.1f} {arrow})"
+
+                report_lines.append(f"  {enh['name']}{changed_marker}")
+                report_lines.append(f"    Signal: {enh['signal']}")
+                report_lines.append(f"    {enh['description']}")
+                report_lines.append(f"    Enhancement: {enh['contribution']:+.1f}{change_info}")
+                report_lines.append("")
+
+        # Confidence score
+        report_lines.append(f"SIGNAL CONFIDENCE: {analysis.get('confidence_score', 0)}% ({analysis.get('confidence_label', 'N/A')})")
+        if analysis.get('recommendation_note'):
+            report_lines.append(f"  Note: {analysis['recommendation_note']}")
+        report_lines.append("")
+
+        # Trade targets
+        targets = analysis.get('trade_targets', {})
+        report_lines.append("TRADE TARGETS:")
+        report_lines.append("-" * 80)
+        if targets.get('stop_loss_primary'):
+            report_lines.append(f"  Stop-Loss (Primary):  {targets['stop_loss_primary']:.2f}")
+        if targets.get('stop_loss_kijun'):
+            report_lines.append(f"  Stop-Loss (Kijun):    {targets['stop_loss_kijun']:.2f}")
+        if targets.get('stop_loss_cloud'):
+            report_lines.append(f"  Stop-Loss (Cloud):    {targets['stop_loss_cloud']:.2f}")
+        if targets.get('take_profit_1'):
+            report_lines.append(f"  Take-Profit 1 (1:1):  {targets['take_profit_1']:.2f}")
+        if targets.get('take_profit_2'):
+            report_lines.append(f"  Take-Profit 2 (1:2):  {targets['take_profit_2']:.2f}")
+        if not any(targets.get(k) for k in ['stop_loss_primary', 'take_profit_1']):
+            report_lines.append("  N/A (insufficient data or AVOID recommendation)")
+        if targets.get('overextended'):
+            report_lines.append(f"  *** WARNING: Price overextended ({targets['kijun_distance_pct']:+.1f}% from Kijun) ***")
+        report_lines.append("")
         report_lines.append("-" * 80)
 
     report_lines.append("")
@@ -846,11 +1280,12 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
     content.append(Paragraph("SUMMARY TABLE (* = changed from previous day)", heading_style))
 
     # Build table data
-    table_data = [['Ticker', 'Kumo', 'TK', 'Cloud', 'Chik', 'Kij', 'Score', 'Recommendation', 'Price']]
+    table_data = [['Ticker', 'Kumo', 'TK', 'Cloud', 'Chik', 'Kij', 'Score', 'Conf%', 'Recommendation', 'Price', 'SL', 'TP1']]
 
     for analysis in analyses:
         components = analysis.get('components', {})
         changes = analysis.get('changes', {})
+        targets = analysis.get('trade_targets', {})
 
         kumo = components.get('kumo', {}).get('contribution', 0)
         tk = components.get('tk_cross', {}).get('contribution', 0)
@@ -866,6 +1301,9 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
         chikou_str = f"{chikou:+.1f}*" if 'chikou' in changes else f"{chikou:+.1f}"
         kijun_str = f"{kijun:+.1f}*" if 'kijun' in changes else f"{kijun:+.1f}"
         total_str = f"{total:+.1f}*" if 'total' in changes else f"{total:+.1f}"
+        conf_str = f"{analysis.get('confidence_score', 0)}%"
+        sl_str = f"{targets['stop_loss_primary']:.2f}" if targets.get('stop_loss_primary') else "N/A"
+        tp1_str = f"{targets['take_profit_1']:.2f}" if targets.get('take_profit_1') else "N/A"
 
         # Create clickable ticker link to detail section
         dest_name = f'stock_{analysis["ticker"]}'
@@ -882,8 +1320,11 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
             chikou_str,
             kijun_str,
             total_str,
+            conf_str,
             analysis['recommendation'],
-            f"${analysis['close_price']:.2f}"
+            f"{analysis['close_price']:.2f}",
+            sl_str,
+            tp1_str,
         ])
 
     # Create table with styling
@@ -893,25 +1334,36 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 10),
-        ('FONTSIZE', (0, 1), (-1, -1), 8),
+        ('FONTSIZE', (0, 0), (-1, 0), 8),
+        ('FONTSIZE', (0, 1), (-1, -1), 7),
         ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
         ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightgrey]),
     ]))
 
-    # Color code recommendations
+    # Color code recommendations and confidence
     for i, analysis in enumerate(analyses, 1):
         rec = analysis['recommendation']
+        rec_col = 8  # Recommendation column index
+        conf_col = 7  # Confidence column index
         if rec == 'BUY':
-            table.setStyle(TableStyle([('BACKGROUND', (7, i), (7, i), colors.lightgreen)]))
+            table.setStyle(TableStyle([('BACKGROUND', (rec_col, i), (rec_col, i), colors.lightgreen)]))
         elif rec == 'BUY (MODERATE)':
-            table.setStyle(TableStyle([('BACKGROUND', (7, i), (7, i), colors.palegreen)]))
+            table.setStyle(TableStyle([('BACKGROUND', (rec_col, i), (rec_col, i), colors.palegreen)]))
         elif rec == 'AVOID':
-            table.setStyle(TableStyle([('BACKGROUND', (7, i), (7, i), colors.lightcoral)]))
+            table.setStyle(TableStyle([('BACKGROUND', (rec_col, i), (rec_col, i), colors.lightcoral)]))
         elif rec == 'WAIT':
-            table.setStyle(TableStyle([('BACKGROUND', (7, i), (7, i), colors.lightyellow)]))
+            table.setStyle(TableStyle([('BACKGROUND', (rec_col, i), (rec_col, i), colors.lightyellow)]))
+
+        # Color code confidence
+        conf = analysis.get('confidence_score', 0)
+        if conf >= 80:
+            table.setStyle(TableStyle([('BACKGROUND', (conf_col, i), (conf_col, i), colors.lightgreen)]))
+        elif conf >= 50:
+            table.setStyle(TableStyle([('BACKGROUND', (conf_col, i), (conf_col, i), colors.lightyellow)]))
+        else:
+            table.setStyle(TableStyle([('BACKGROUND', (conf_col, i), (conf_col, i), colors.lightcoral)]))
 
         # Highlight rows with changes
         if analysis.get('changes'):
@@ -923,7 +1375,7 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
     # Legend
     legend_text = "Legend: Kumo=Price vs Cloud | TK=Tenkan vs Kijun | Cloud=Future Cloud Color | Chik=Chikou Span | Kij=Price vs Kijun"
     content.append(Paragraph(legend_text, normal_style))
-    content.append(Paragraph("* = value changed from previous day (ALERT) | Yellow ticker = signals changed today", normal_style))
+    content.append(Paragraph("Conf%=Signal Confidence | SL=Stop-Loss | TP1=Take-Profit Target 1 | * = changed from previous day", normal_style))
 
     content.append(PageBreak())
 
@@ -1007,7 +1459,81 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
 
         content.append(Spacer(1, 0.1*inch))
         content.append(comp_table)
-        content.append(Spacer(1, 0.2*inch))
+        content.append(Spacer(1, 0.15*inch))
+
+        # Enhancement signals table
+        enh_data = [['Enhancement', 'Signal', 'Value', 'Changed?']]
+        enhancement_names = {
+            'volume_confirm': 'Volume Confirmation',
+            'kumo_twist': 'Kumo Twist',
+            'cloud_thickness': 'Cloud Thickness',
+            'tk_location': 'TK Cross Location',
+            'kijun_distance': 'Kijun Distance',
+            'flat_lines': 'Flat Lines',
+        }
+        for enh_key in ['volume_confirm', 'kumo_twist', 'cloud_thickness',
+                        'tk_location', 'kijun_distance', 'flat_lines']:
+            enh = analysis.get('enhancements', {}).get(enh_key, {})
+            contrib = enh.get('contribution', 0)
+            changed = ''
+            if enh_key in changes:
+                prev_val = changes[enh_key]['prev']
+                changed = f"YES ({prev_val:+.1f} → {contrib:+.1f})"
+            enh_data.append([
+                enhancement_names.get(enh_key, enh_key),
+                enh.get('signal', 'N/A'),
+                f"{contrib:+.1f}",
+                changed,
+            ])
+
+        enh_table = Table(enh_data, colWidths=[2.5*inch, 1.5*inch, 1*inch, 1.5*inch])
+        enh_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.darkslategray),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightgrey]),
+        ]))
+
+        # Highlight changed enhancements
+        for i, enh_key in enumerate(['volume_confirm', 'kumo_twist', 'cloud_thickness',
+                                      'tk_location', 'kijun_distance', 'flat_lines'], 1):
+            if enh_key in changes:
+                enh_table.setStyle(TableStyle([('BACKGROUND', (-1, i), (-1, i), colors.yellow)]))
+
+        content.append(enh_table)
+        content.append(Spacer(1, 0.1*inch))
+
+        # Confidence score
+        conf = analysis.get('confidence_score', 0)
+        conf_label = analysis.get('confidence_label', 'N/A')
+        conf_color = 'green' if conf >= 80 else ('orange' if conf >= 50 else 'red')
+        conf_text = f"<b>Signal Confidence:</b> <font color='{conf_color}'>{conf}% ({conf_label})</font>"
+        if analysis.get('recommendation_note'):
+            conf_text += f" — {analysis['recommendation_note']}"
+        content.append(Paragraph(conf_text, normal_style))
+
+        # Trade targets
+        targets = analysis.get('trade_targets', {})
+        if targets:
+            targets_parts = []
+            if targets.get('stop_loss_primary'):
+                targets_parts.append(f"<b>Stop-Loss:</b> {targets['stop_loss_primary']:.2f}")
+            if targets.get('take_profit_1'):
+                targets_parts.append(f"<b>TP1 (1:1):</b> {targets['take_profit_1']:.2f}")
+            if targets.get('take_profit_2'):
+                targets_parts.append(f"<b>TP2 (1:2):</b> {targets['take_profit_2']:.2f}")
+            if targets_parts:
+                content.append(Paragraph(" | ".join(targets_parts), normal_style))
+            if targets.get('overextended'):
+                content.append(Paragraph(
+                    f"<font color='red'><b>WARNING:</b> Price overextended — {targets['kijun_distance_pct']:+.1f}% from Kijun</font>",
+                    normal_style
+                ))
+
+        content.append(Spacer(1, 0.15*inch))
 
         # Add chart image
         chart_filename = f"{ticker.lower()}_ichimoku_{datetime.now().strftime('%Y%m%d')}.png"
@@ -1080,14 +1606,14 @@ def process_stock(stock_info, period, interval, save_csv, save_chart, charts_fol
         # Calculate Ichimoku indicators
         df = calculate_ichimoku(df)
 
-        # Create and save Ichimoku chart
-        if save_chart:
-            plot_ichimoku(df, ticker, name, output_folder=charts_folder)
-
-        # Analyze Ichimoku signals
+        # Analyze Ichimoku signals (must run before chart to provide trade targets)
         analysis = analyze_ichimoku_signals(df, ticker, name)
 
-        print(f"OK ({analysis['recommendation']})")
+        # Create and save Ichimoku chart (with trade target lines)
+        if save_chart:
+            plot_ichimoku(df, ticker, name, output_folder=charts_folder, analysis=analysis)
+
+        print(f"OK ({analysis['recommendation']}, {analysis['confidence_score']}% conf)")
         return analysis
     else:
         print("FAILED")
