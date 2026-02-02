@@ -46,9 +46,6 @@ def download_stock(ticker, stock_name, period="1y", interval="1d", save_to_csv=T
     pandas.DataFrame : Stock price data
     """
 
-    print(f"Downloading {ticker} stock data...")
-    print(f"Period: {period}, Interval: {interval}")
-
     # Create ticker object
     stock = yf.Ticker(ticker)
 
@@ -56,20 +53,8 @@ def download_stock(ticker, stock_name, period="1y", interval="1d", save_to_csv=T
     df = stock.history(period=period, interval=interval)
 
     if df.empty:
-        print("No data retrieved. Please check your parameters.")
+        print(f"    No data retrieved for {ticker}. Skipping.")
         return None
-
-    print(f"\nSuccessfully downloaded {len(df)} records")
-    print(f"Date range: {df.index[0]} to {df.index[-1]}")
-
-    # Display basic statistics
-    print("\n" + "="*50)
-    print("SUMMARY STATISTICS")
-    print("="*50)
-    print(f"Latest Close Price: ${df['Close'].iloc[-1]:.2f}")
-    print(f"Highest Price: ${df['High'].max():.2f}")
-    print(f"Lowest Price: ${df['Low'].min():.2f}")
-    print(f"Average Volume: {df['Volume'].mean():,.0f}")
 
     # Save to CSV if requested
     if save_to_csv:
@@ -77,7 +62,6 @@ def download_stock(ticker, stock_name, period="1y", interval="1d", save_to_csv=T
         if output_folder:
             filename = os.path.join(output_folder, filename)
         df.to_csv(filename)
-        print(f"\nData saved to: {filename}")
 
     return df
 
@@ -141,7 +125,7 @@ def plot_ichimoku(df, ticker, stock_name, filename=None, output_folder=None):
     if output_folder:
         filename = os.path.join(output_folder, filename)
 
-    print(f"\nCreating Ichimoku Cloud chart...")
+    # Create Ichimoku Cloud chart
 
     # Create figure and axis
     fig, ax = plt.subplots(figsize=(16, 9))
@@ -231,8 +215,6 @@ def plot_ichimoku(df, ticker, stock_name, filename=None, output_folder=None):
 
     # Save figure
     plt.savefig(filename, dpi=300, bbox_inches='tight')
-    print(f"Ichimoku chart saved to: {filename}")
-
     # Close the plot to free memory
     plt.close()
 
@@ -775,55 +757,6 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
     with open(filename, 'w') as f:
         f.write('\n'.join(report_lines))
 
-    print(f"\nTrading report saved to: {filename}")
-
-    # Also print summary to console
-    print("\n" + "="*130)
-    summary_title = "LONG-ONLY RECOMMENDATIONS SUMMARY"
-    if market_name:
-        summary_title += f" - {market_name}"
-    summary_title += " (* = changed from previous day):"
-    print(summary_title)
-    print("-" * 130)
-    print(
-        f"{'Ticker':<12} {'Kumo':>6} {'TK':>6} {'Cloud':>6} {'Chik':>6} {'Kij':>6} "
-        f"{'Score':>7} {'Long Entry':<15} {'Price':<10}"
-    )
-    print("-" * 130)
-    for analysis in analyses:
-        components = analysis.get('components', {})
-        changes = analysis.get('changes', {})
-
-        kumo = components.get('kumo', {}).get('contribution', 0)
-        tk = components.get('tk_cross', {}).get('contribution', 0)
-        cloud = components.get('cloud_color', {}).get('contribution', 0)
-        chikou = components.get('chikou', {}).get('contribution', 0)
-        kijun = components.get('kijun', {}).get('contribution', 0)
-        total = analysis.get('total_score', 0)
-
-        # Format values with asterisk if changed
-        kumo_str = f"{kumo:+.1f}*" if 'kumo' in changes else f"{kumo:+.1f}"
-        tk_str = f"{tk:+.1f}*" if 'tk_cross' in changes else f"{tk:+.1f}"
-        cloud_str = f"{cloud:+.1f}*" if 'cloud_color' in changes else f"{cloud:+.1f}"
-        chikou_str = f"{chikou:+.1f}*" if 'chikou' in changes else f"{chikou:+.1f}"
-        kijun_str = f"{kijun:+.1f}*" if 'kijun' in changes else f"{kijun:+.1f}"
-        total_str = f"{total:+.1f}*" if 'total' in changes else f"{total:+.1f}"
-
-        print(
-            f"{analysis['ticker']:<12} "
-            f"{kumo_str:>6} "
-            f"{tk_str:>6} "
-            f"{cloud_str:>6} "
-            f"{chikou_str:>6} "
-            f"{kijun_str:>6} "
-            f"{total_str:>7} "
-            f"{analysis['recommendation']:<15} "
-            f"${analysis['close_price']:<9.2f}"
-        )
-    print("-" * 130)
-    print("Legend: Kumo=Price vs Cloud | TK=Tenkan vs Kijun | Cloud=Future Cloud Color | Chik=Chikou Span | Kij=Price vs Kijun")
-    print("        * = value changed from previous day (ALERT)")
-    print("="*130)
 
 
 def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimoku_report.pdf", market_name=None, currency="USD"):
@@ -1101,12 +1034,11 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
 
     # Build PDF
     doc.build(content)
-    print(f"\nPDF report saved to: {pdf_path}")
 
     return pdf_path
 
 
-def process_stock(stock_info, period, interval, save_csv, save_chart, charts_folder=None, data_folder=None):
+def process_stock(stock_info, period, interval, save_csv, save_chart, charts_folder=None, data_folder=None, stock_index=0, stock_total=0):
     """
     Process a single stock: download data and create chart
 
@@ -1126,6 +1058,10 @@ def process_stock(stock_info, period, interval, save_csv, save_chart, charts_fol
         Folder to save chart PNG files (default: current directory)
     data_folder : str
         Folder to save CSV data files (default: current directory)
+    stock_index : int
+        Current stock number (1-based) for progress display
+    stock_total : int
+        Total number of stocks in this market for progress display
 
     Returns:
     --------
@@ -1133,25 +1069,14 @@ def process_stock(stock_info, period, interval, save_csv, save_chart, charts_fol
     """
     ticker = stock_info['ticker']
     name = stock_info['name']
+    progress = f"[{stock_index}/{stock_total}]" if stock_total > 0 else ""
 
-    print("\n" + "="*70)
-    print(f"Processing: {name} ({ticker})")
-    print("="*70)
+    print(f"  {progress} {name} ({ticker})...", end=" ", flush=True)
 
     # Download stock data
     df = download_stock(ticker, name, period=period, interval=interval, save_to_csv=save_csv, output_folder=data_folder)
 
     if df is not None:
-        print("\n" + "="*50)
-        print("FIRST 5 ROWS")
-        print("="*50)
-        print(df.head())
-
-        print("\n" + "="*50)
-        print("LAST 5 ROWS")
-        print("="*50)
-        print(df.tail())
-
         # Calculate Ichimoku indicators
         df = calculate_ichimoku(df)
 
@@ -1162,10 +1087,10 @@ def process_stock(stock_info, period, interval, save_csv, save_chart, charts_fol
         # Analyze Ichimoku signals
         analysis = analyze_ichimoku_signals(df, ticker, name)
 
-        print(f"\n✓ Successfully processed {ticker}")
+        print(f"OK ({analysis['recommendation']})")
         return analysis
     else:
-        print(f"\n✗ Failed to process {ticker}")
+        print("FAILED")
         return None
 
 def archive_previous_output(base_output_folder, archive_folder):
@@ -1196,7 +1121,7 @@ def archive_previous_output(base_output_folder, archive_folder):
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     archive_destination = os.path.join(archive_folder, f"run_{timestamp}")
 
-    print(f"\nArchiving previous output to: {archive_destination}")
+    print(f"Archiving previous output to: {archive_destination}")
 
     # Move all contents from output to archive
     os.makedirs(archive_destination, exist_ok=True)
@@ -1205,9 +1130,6 @@ def archive_previous_output(base_output_folder, archive_folder):
         source_path = os.path.join(base_output_folder, item)
         dest_path = os.path.join(archive_destination, item)
         shutil.move(source_path, dest_path)
-        print(f"  Moved: {item}")
-
-    print(f"Archive complete. Output folder is now empty.\n")
 
 
 def main():
@@ -1247,14 +1169,7 @@ def main():
     # Count total stocks across all markets
     total_stocks = sum(len(market_data.get('stocks', [])) for market_data in markets.values())
 
-    print("="*70)
-    print(f"STOCK DATA DOWNLOAD AND CHART GENERATION")
-    print("="*70)
-    print(f"Markets to process: {', '.join(markets.keys())}")
-    print(f"Total stocks to process: {total_stocks}")
-    print(f"Period: {period}, Interval: {interval}")
-    print(f"Save CSV: {save_csv}, Save Chart: {save_chart}")
-    print("="*70)
+    print(f"Ichimoku Cloud Scanner — {total_stocks} stocks across {len(markets)} market(s) ({period}, {interval})")
 
     # Process each market
     for market_key, market_data in markets.items():
@@ -1266,10 +1181,7 @@ def main():
             print(f"\nSkipping {market_name} - no stocks configured")
             continue
 
-        print("\n" + "#"*70)
-        print(f"# PROCESSING MARKET: {market_name}")
-        print(f"# Stocks: {len(stocks)}, Currency: {currency}")
-        print("#"*70)
+        print(f"\n--- {market_name} ({len(stocks)} stocks, {currency}) ---")
 
         # Create market-specific output folders
         market_output_folder = os.path.join(base_output_folder, market_key)
@@ -1281,25 +1193,28 @@ def main():
 
         # Process each stock in this market and collect analyses
         analyses = []
-        for stock_info in stocks:
+        num_stocks = len(stocks)
+        for i, stock_info in enumerate(stocks, start=1):
             try:
                 analysis = process_stock(stock_info, period, interval, save_csv, save_chart,
-                                         charts_folder=charts_folder, data_folder=data_folder)
+                                         charts_folder=charts_folder, data_folder=data_folder,
+                                         stock_index=i, stock_total=num_stocks)
                 if analysis is not None:
                     analyses.append(analysis)
             except Exception as e:
-                print(f"\n✗ Error processing {stock_info['ticker']}: {str(e)}")
+                print(f"  [{i}/{num_stocks}] {stock_info['ticker']}... ERROR: {str(e)}")
                 continue
 
         # Sort analyses by recommendation (descending priority: BUY first, then AVOID last)
         analyses.sort(key=lambda x: get_recommendation_priority(x['recommendation']))
 
-        print("\n" + "="*70)
-        print(f"{market_name} STOCKS PROCESSED!")
-        print("="*70)
+        succeeded = len(analyses)
+        failed = num_stocks - succeeded
+        print(f"  Done: {succeeded} succeeded, {failed} failed")
 
         # Generate trading report for this market
         if analyses:
+            print(f"  Generating reports for {market_name}...", end=" ", flush=True)
             report_filename = f"ichimoku_trading_report_{market_key}.txt"
             pdf_filename = f"ichimoku_report_{market_key}.pdf"
             generate_report(analyses, filename=report_filename, output_folder=market_output_folder,
@@ -1307,10 +1222,9 @@ def main():
             # Generate PDF report with charts
             generate_pdf_report(analyses, charts_folder, market_output_folder,
                               filename=pdf_filename, market_name=market_name, currency=currency)
+            print("OK")
 
-    print("\n" + "="*70)
-    print("ALL MARKETS PROCESSED!")
-    print("="*70)
+    print(f"\nAll markets processed. Output in: {base_output_folder}/")
 
 if __name__ == "__main__":
     main()

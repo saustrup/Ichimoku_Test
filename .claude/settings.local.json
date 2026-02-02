@@ -5,7 +5,8 @@
       "Bash(git init:*)",
       "Bash(git add:*)",
       "Bash(git commit -m \"$\\(cat <<''EOF''\nInitial commit: Stock Ichimoku Cloud Analysis Tool\n\n- Add main Python script for stock data download and analysis\n- Implement Ichimoku Cloud chart generation with candlesticks\n- Add automated trading signal analysis\n- Include JSON configuration for 25 stocks \\(US + Danish\\)\n- Generate comprehensive trading reports\n- Add README with usage instructions\n- Add requirements.txt for dependencies\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(python3:*)"
     ]
   }
 }
