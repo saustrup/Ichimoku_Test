@@ -26,9 +26,8 @@ ENV/
 env/
 
 # Output files
-*.csv
-*.png
-ichimoku_trading_report.txt
+Output/
+Archive/
 
 # IDE
 .vscode/
@@ -40,47 +39,3 @@ ichimoku_trading_report.txt
 # OS
 .DS_Store
 Thumbs.db
-Output/ichimoku_report.pdf
-Output/Copenhagen/ichimoku_report_Copenhagen.pdf
-Output/Copenhagen/ichimoku_trading_report_Copenhagen.txt
-Output/NASDAQ/ichimoku_report_NASDAQ.pdf
-Output/NASDAQ/ichimoku_trading_report_NASDAQ.txt
-Archive/run_20260126_185331/ichimoku_report.pdf
-Archive/run_20260126_185331/Copenhagen/ichimoku_report_Copenhagen.pdf
-Archive/run_20260126_185331/Copenhagen/ichimoku_trading_report_Copenhagen.txt
-Archive/run_20260126_185331/NASDAQ/ichimoku_report_NASDAQ.pdf
-Archive/run_20260126_185331/NASDAQ/ichimoku_trading_report_NASDAQ.txt
-Archive/run_20260126_203102/Copenhagen/ichimoku_report_Copenhagen.pdf
-Archive/run_20260126_203102/Copenhagen/ichimoku_trading_report_Copenhagen.txt
-Archive/run_20260126_203102/NASDAQ/ichimoku_report_NASDAQ.pdf
-Archive/run_20260126_203102/NASDAQ/ichimoku_trading_report_NASDAQ.txt
-Archive/run_20260126_204638/Copenhagen/ichimoku_report_Copenhagen.pdf
-Archive/run_20260126_204638/Copenhagen/ichimoku_trading_report_Copenhagen.txt
-Archive/run_20260126_204638/NASDAQ/ichimoku_report_NASDAQ.pdf
-Archive/run_20260126_204638/NASDAQ/ichimoku_trading_report_NASDAQ.txt
-Archive/run_20260127_200008/Copenhagen/ichimoku_report_Copenhagen.pdf
-Archive/run_20260127_200008/Copenhagen/ichimoku_trading_report_Copenhagen.txt
-Archive/run_20260127_200008/NASDAQ/ichimoku_report_NASDAQ.pdf
-Archive/run_20260127_200008/NASDAQ/ichimoku_trading_report_NASDAQ.txt
-Archive/run_20260128_071459/Copenhagen/ichimoku_report_Copenhagen.pdf
-Archive/run_20260128_071459/Copenhagen/ichimoku_trading_report_Copenhagen.txt
-Archive/run_20260128_071459/NASDAQ/ichimoku_report_NASDAQ.pdf
-Archive/run_20260128_071459/NASDAQ/ichimoku_trading_report_NASDAQ.txt
-Archive/run_20260129_065033/Copenhagen/ichimoku_trading_report_Copenhagen.txt
-Archive/run_20260129_065033/NASDAQ/ichimoku_trading_report_NASDAQ.txt
-Archive/run_20260129_193345/Copenhagen/ichimoku_report_Copenhagen.pdf
-Archive/run_20260129_193345/Copenhagen/ichimoku_trading_report_Copenhagen.txt
-Archive/run_20260129_193345/NASDAQ/ichimoku_report_NASDAQ.pdf
-Archive/run_20260129_193345/NASDAQ/ichimoku_trading_report_NASDAQ.txt
-Archive/run_20260130_063154/Copenhagen/ichimoku_report_Copenhagen.pdf
-Archive/run_20260130_063154/Copenhagen/ichimoku_trading_report_Copenhagen.txt
-Archive/run_20260130_063154/NASDAQ/ichimoku_report_NASDAQ.pdf
-Archive/run_20260130_063154/NASDAQ/ichimoku_trading_report_NASDAQ.txt
-Archive/run_20260202_061144/Copenhagen/ichimoku_report_Copenhagen.pdf
-Archive/run_20260202_061144/Copenhagen/ichimoku_trading_report_Copenhagen.txt
-Archive/run_20260202_061144/NASDAQ/ichimoku_report_NASDAQ.pdf
-Archive/run_20260202_061144/NASDAQ/ichimoku_trading_report_NASDAQ.txt
-Archive/run_20260202_062353/Copenhagen/ichimoku_report_Copenhagen.pdf
-Archive/run_20260202_062353/Copenhagen/ichimoku_trading_report_Copenhagen.txt
-Archive/run_20260202_062353/NASDAQ/ichimoku_report_NASDAQ.pdf
-Archive/run_20260202_062353/NASDAQ/ichimoku_trading_report_NASDAQ.txt
