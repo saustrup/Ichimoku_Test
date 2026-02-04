@@ -11,7 +11,8 @@
       "Bash(python:*)",
       "Bash(git commit -m \"$\\(cat <<''EOF''\nSimplify .gitignore by ignoring Output/ and Archive/ directories\n\nReplace ~40 individual file entries with directory-level ignores.\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
       "Bash(git push)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(open:*)"
     ]
   }
 }

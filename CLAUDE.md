@@ -26,7 +26,7 @@ There is no test suite, linter, or build system configured.
 2. **Archive** — moves previous `Output/` to `Archive/run_<YYYYMMDD_HHMMSS>/` before each run
 3. **Per-market processing loop**:
    - Download stock data → Calculate Ichimoku indicators → Generate PNG chart → Analyze signals
-4. **Report generation** — text report + PDF report per market, sorted by recommendation strength
+4. **Report generation** — text report + PDF report + HTML dashboard per market, sorted by recommendation strength
 
 Individual stock processing is wrapped in try/except so a single ticker failure does not abort the entire run.
 
@@ -43,6 +43,8 @@ Individual stock processing is wrapped in try/except so a single ticker failure 
 | `get_recommendation_priority()` | Sorting helper — BUY=1, BUY MODERATE=2, WAIT=3, AVOID=4 |
 | `generate_report()` | Text report with summary table and per-stock component breakdown |
 | `generate_pdf_report()` | PDF with clickable TOC, color-coded recommendations, embedded charts |
+| `generate_html_dashboard()` | Self-contained HTML dashboard with dark-themed grid view, filtering/sorting, and modal chart viewer |
+| `generate_index_page()` | Top-level index.html linking all market dashboards with summary stats |
 | `process_stock()` | Orchestrates single stock: download → calculate → analyze → chart (analysis before chart for trade target lines) |
 | `archive_previous_output()` | Moves `Output/` to `Archive/run_<timestamp>/` |
 | `main()` | Entry point: archive → load config → process markets → generate reports |
@@ -107,11 +109,14 @@ Adding a new market or stock only requires editing this JSON file.
 ### Output Structure
 
 ```
-Output/<MarketName>/
-  ├── charts/    (PNG candlestick + Ichimoku overlay)
-  ├── data/      (CSV price data)
-  ├── ichimoku_trading_report_<Market>.txt
-  └── ichimoku_report_<Market>.pdf
+Output/
+  ├── index.html  (top-level dashboard linking all markets)
+  └── <MarketName>/
+      ├── charts/    (PNG candlestick + Ichimoku overlay)
+      ├── data/      (CSV price data)
+      ├── ichimoku_trading_report_<Market>.txt
+      ├── ichimoku_report_<Market>.pdf
+      └── ichimoku_dashboard_<Market>.html  (interactive HTML dashboard)
 ```
 
 Previous runs are preserved in `Archive/run_<YYYYMMDD_HHMMSS>/` with the same structure.

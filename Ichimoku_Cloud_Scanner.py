@@ -1564,6 +1564,1285 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
     return pdf_path
 
 
+def generate_html_dashboard(analyses, charts_folder, output_folder, filename="ichimoku_dashboard.html", market_name=None, currency="USD"):
+    """
+    Generate a self-contained HTML dashboard with grid view and interactive chart modal.
+
+    Parameters:
+    -----------
+    analyses : list
+        List of analysis dictionaries from analyze_ichimoku_signals()
+    charts_folder : str
+        Folder containing chart PNG files
+    output_folder : str
+        Folder to save the HTML file
+    filename : str
+        Output filename
+    market_name : str
+        Display name for the market
+    currency : str
+        Currency symbol for price display
+    """
+    if not analyses:
+        return None
+
+    market_name = market_name or "Stock Market"
+    scan_date = analyses[0].get('date', datetime.now().strftime('%Y-%m-%d'))
+
+    # Count recommendations
+    rec_counts = {}
+    for a in analyses:
+        rec = a['recommendation']
+        rec_counts[rec] = rec_counts.get(rec, 0) + 1
+
+    # Prepare stock data for JSON embedding
+    stocks_json = []
+    for a in analyses:
+        ticker = a['ticker']
+        chart_filename = f"{ticker.lower()}_ichimoku_{datetime.now().strftime('%Y%m%d')}.png"
+        chart_path = os.path.join(charts_folder, chart_filename)
+        chart_rel = f"charts/{chart_filename}" if os.path.exists(chart_path) else ""
+
+        # Serialize components
+        components = {}
+        for key, comp in a.get('components', {}).items():
+            components[key] = {
+                'name': comp.get('name', key),
+                'signal': str(comp.get('signal', 'N/A')),
+                'description': str(comp.get('description', '')),
+                'contribution': float(comp.get('contribution', 0))
+            }
+
+        # Serialize enhancements
+        enhancements = {}
+        for key, enh in a.get('enhancements', {}).items():
+            enhancements[key] = {
+                'signal': str(enh.get('signal', 'N/A')),
+                'description': str(enh.get('description', '')),
+                'contribution': float(enh.get('contribution', 0))
+            }
+
+        # Serialize trade targets
+        targets = a.get('trade_targets', {})
+        trade_targets = {
+            'stop_loss_primary': float(targets.get('stop_loss_primary', 0)),
+            'stop_loss_kijun': float(targets.get('stop_loss_kijun', 0)),
+            'stop_loss_cloud': float(targets.get('stop_loss_cloud', 0)),
+            'take_profit_1': float(targets.get('take_profit_1', 0)),
+            'take_profit_2': float(targets.get('take_profit_2', 0)),
+            'kijun_distance_pct': float(targets.get('kijun_distance_pct', 0)),
+            'overextended': bool(targets.get('overextended', False))
+        }
+
+        # Serialize changes
+        changes = {}
+        raw_changes = a.get('changes', {})
+        for key, ch in raw_changes.items():
+            if isinstance(ch, dict):
+                changes[key] = {
+                    'prev': float(ch.get('prev', 0)),
+                    'current': float(ch.get('current', 0)),
+                    'direction': str(ch.get('direction', ''))
+                }
+
+        stocks_json.append({
+            'ticker': ticker,
+            'name': a.get('name', ticker),
+            'date': a.get('date', scan_date),
+            'close_price': round(float(a.get('close_price', 0)), 2),
+            'currency': currency,
+            'recommendation': a.get('recommendation', 'N/A'),
+            'confidence_score': int(a.get('confidence_score', 0)),
+            'confidence_label': a.get('confidence_label', 'N/A'),
+            'trend': a.get('trend', 'N/A'),
+            'strength': a.get('strength', 'N/A'),
+            'total_score': float(a.get('total_score', 0)),
+            'components': components,
+            'enhancements': enhancements,
+            'trade_targets': trade_targets,
+            'changes': changes,
+            'chart_file': chart_rel,
+            'has_changes': len(changes) > 0,
+            'recommendation_note': a.get('recommendation_note', ''),
+            'prev_total_score': float(a.get('prev_total_score', a.get('total_score', 0)))
+        })
+
+    stocks_data = json.dumps(stocks_json, indent=2)
+
+    # Build summary stats for header
+    buy_count = rec_counts.get('BUY', 0)
+    moderate_count = rec_counts.get('BUY (MODERATE)', 0)
+    wait_count = rec_counts.get('WAIT', 0)
+    avoid_count = rec_counts.get('AVOID', 0)
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ichimoku Dashboard — {market_name}</title>
+<style>
+:root {{
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #1c2333;
+  --bg-card: #161b22;
+  --bg-card-hover: #1c2333;
+  --bg-modal: #0d1117ee;
+  --border: #30363d;
+  --border-light: #3d444d;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #6e7681;
+  --green: #00ff88;
+  --green-dim: #00cc6a;
+  --green-bg: #00ff8818;
+  --red: #ff4757;
+  --red-dim: #cc3945;
+  --red-bg: #ff475718;
+  --amber: #ffaa00;
+  --amber-dim: #cc8800;
+  --amber-bg: #ffaa0018;
+  --yellow: #f0e040;
+  --yellow-bg: #f0e04018;
+  --blue: #58a6ff;
+  --blue-dim: #388bfd;
+  --blue-bg: #58a6ff18;
+  --purple: #bc8cff;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --shadow: 0 4px 24px rgba(0,0,0,.4);
+  --shadow-lg: 0 8px 48px rgba(0,0,0,.6);
+  --transition: .2s ease;
+  --font: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+}}
+
+[data-theme="light"] {{
+  --bg-primary: #ffffff;
+  --bg-secondary: #f6f8fa;
+  --bg-tertiary: #eef1f5;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f6f8fa;
+  --bg-modal: rgba(255,255,255,0.92);
+  --border: #d0d7de;
+  --border-light: #bbc0c7;
+  --text-primary: #1f2328;
+  --text-secondary: #57606a;
+  --text-muted: #8b949e;
+  --green: #1a7f37;
+  --green-dim: #2da44e;
+  --green-bg: rgba(26,127,55,0.12);
+  --red: #cf222e;
+  --red-dim: #d1242f;
+  --red-bg: rgba(207,34,46,0.12);
+  --amber: #bf8700;
+  --amber-dim: #9a6700;
+  --amber-bg: rgba(191,135,0,0.12);
+  --yellow: #7d6e00;
+  --yellow-bg: rgba(125,110,0,0.12);
+  --blue: #0969da;
+  --blue-dim: #0550ae;
+  --blue-bg: rgba(9,105,218,0.12);
+  --purple: #8250df;
+  --shadow: 0 4px 24px rgba(0,0,0,.08);
+  --shadow-lg: 0 8px 48px rgba(0,0,0,.12);
+}}
+
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+
+body {{
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font);
+  min-height: 100vh;
+  overflow-x: hidden;
+}}
+
+/* ─── Header ─── */
+.header {{
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  padding: 24px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  backdrop-filter: blur(12px);
+}}
+.header-left h1 {{
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -.3px;
+}}
+.header-left h1 span {{
+  color: var(--blue);
+}}
+.header-left .subtitle {{
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-top: 2px;
+}}
+.header-stats {{
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}}
+.stat-pill {{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid transparent;
+}}
+.stat-pill .dot {{
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}}
+.stat-buy {{ background: var(--green-bg); color: var(--green); border-color: var(--green); }}
+.stat-buy .dot {{ background: var(--green); }}
+.stat-moderate {{ background: var(--amber-bg); color: var(--amber); border-color: var(--amber); }}
+.stat-moderate .dot {{ background: var(--amber); }}
+.stat-wait {{ background: var(--yellow-bg); color: var(--yellow); border-color: var(--yellow); }}
+.stat-wait .dot {{ background: var(--yellow); }}
+.stat-avoid {{ background: var(--red-bg); color: var(--red); border-color: var(--red); }}
+.stat-avoid .dot {{ background: var(--red); }}
+
+/* Theme toggle */
+.theme-toggle {{
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  transition: all var(--transition);
+  flex-shrink: 0;
+}}
+.theme-toggle:hover {{
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+  background: var(--bg-card-hover, var(--bg-tertiary));
+}}
+
+/* ─── Toolbar ─── */
+.toolbar {{
+  padding: 16px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-primary);
+}}
+.filter-group {{
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}}
+.filter-btn {{
+  padding: 7px 16px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all var(--transition);
+  font-family: var(--font);
+}}
+.filter-btn:hover {{
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}}
+.filter-btn.active {{
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}}
+.sort-select {{
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  font-family: var(--font);
+}}
+.sort-select:focus {{ outline: 1px solid var(--blue); }}
+
+/* ─── Grid ─── */
+.grid-container {{
+  padding: 24px 32px;
+}}
+.grid {{
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+  gap: 16px;
+}}
+.card {{
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  cursor: pointer;
+  transition: all var(--transition);
+  position: relative;
+  overflow: hidden;
+}}
+.card::before {{
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  border-radius: var(--radius) var(--radius) 0 0;
+}}
+.card.rec-buy::before {{ background: var(--green); }}
+.card.rec-moderate::before {{ background: var(--amber); }}
+.card.rec-wait::before {{ background: var(--yellow); }}
+.card.rec-avoid::before {{ background: var(--red); }}
+.card:hover {{
+  border-color: var(--border-light);
+  background: var(--bg-card-hover);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}}
+.card-header {{
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}}
+.card-ticker {{
+  font-size: 18px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  letter-spacing: .5px;
+}}
+.card-name {{
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}}
+.badge {{
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .5px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}}
+.badge-buy {{ background: var(--green-bg); color: var(--green); border: 1px solid var(--green); }}
+.badge-moderate {{ background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber); }}
+.badge-wait {{ background: var(--yellow-bg); color: var(--yellow); border: 1px solid var(--yellow); }}
+.badge-avoid {{ background: var(--red-bg); color: var(--red); border: 1px solid var(--red); }}
+
+.card-body {{
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}}
+.card-row {{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}}
+.card-label {{
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}}
+.card-value {{
+  font-size: 15px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+}}
+.confidence-bar {{
+  width: 100%;
+  height: 4px;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  margin-top: 4px;
+  overflow: hidden;
+}}
+.confidence-fill {{
+  height: 100%;
+  border-radius: 2px;
+  transition: width .4s ease;
+}}
+.score-indicator {{
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}}
+.change-dot {{
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--amber);
+  box-shadow: 0 0 6px var(--amber);
+}}
+
+/* Card trend & strength indicators */
+.card-indicators {{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}}
+.card-trend {{
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+}}
+.trend-arrow {{
+  font-size: 14px;
+  line-height: 1;
+}}
+.trend-bullish {{ color: var(--green); }}
+.trend-bearish {{ color: var(--red); }}
+.trend-neutral {{ color: var(--text-muted); }}
+.strength-tag {{
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}}
+.str-strong {{ background: var(--green-bg); color: var(--green); }}
+.str-moderate {{ background: var(--amber-bg); color: var(--amber); }}
+.str-weak {{ background: var(--red-bg); color: var(--text-muted); }}
+.score-delta {{
+  font-size: 11px;
+  font-family: var(--font-mono);
+  margin-left: 6px;
+}}
+.score-delta-up {{ color: var(--green); }}
+.score-delta-down {{ color: var(--red); }}
+
+/* ─── Modal ─── */
+.modal-backdrop {{
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: var(--bg-modal);
+  z-index: 1000;
+  overflow-y: auto;
+  padding: 40px 20px;
+  backdrop-filter: blur(4px);
+}}
+.modal-backdrop.open {{ display: flex; justify-content: center; align-items: flex-start; }}
+.modal {{
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-width: 1100px;
+  width: 100%;
+  box-shadow: var(--shadow-lg);
+  animation: modalIn .25s ease;
+}}
+@keyframes modalIn {{
+  from {{ opacity: 0; transform: translateY(20px) scale(.98); }}
+  to {{ opacity: 1; transform: translateY(0) scale(1); }}
+}}
+.modal-header {{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 28px;
+  border-bottom: 1px solid var(--border);
+}}
+.modal-header h2 {{
+  font-size: 20px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}}
+.modal-header h2 .ticker {{
+  font-family: var(--font-mono);
+  color: var(--blue);
+}}
+.modal-close {{
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+}}
+.modal-close:hover {{ background: var(--bg-tertiary); color: var(--text-primary); }}
+.modal-body {{ padding: 24px 28px; }}
+
+/* Modal overview strip */
+.overview-strip {{
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}}
+.overview-item {{
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  text-align: center;
+}}
+.overview-item .ov-label {{
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  margin-bottom: 4px;
+}}
+.overview-item .ov-value {{
+  font-size: 18px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+}}
+
+/* Chart area */
+.chart-container {{
+  margin-bottom: 24px;
+  background: var(--bg-primary);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  position: relative;
+}}
+.chart-container img {{
+  width: 100%;
+  height: auto;
+  display: block;
+}}
+.chart-placeholder {{
+  padding: 60px;
+  text-align: center;
+  color: var(--text-muted);
+}}
+
+/* Signals section */
+.section-title {{
+  font-size: 14px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}}
+.signals-grid {{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 24px;
+}}
+@media (max-width: 700px) {{
+  .signals-grid {{ grid-template-columns: 1fr; }}
+}}
+.signal-table {{
+  width: 100%;
+  border-collapse: collapse;
+}}
+.signal-table th {{
+  text-align: left;
+  padding: 8px 12px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}}
+.signal-table td {{
+  padding: 10px 12px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}}
+.signal-table tr:last-child td {{ border-bottom: none; }}
+.signal-name {{
+  font-weight: 600;
+  white-space: nowrap;
+}}
+.signal-badge {{
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+}}
+.sig-bullish {{ background: var(--green-bg); color: var(--green); }}
+.sig-bearish {{ background: var(--red-bg); color: var(--red); }}
+.sig-neutral {{ background: var(--blue-bg); color: var(--blue); }}
+.contrib-pos {{ color: var(--green); font-family: var(--font-mono); font-weight: 600; }}
+.contrib-neg {{ color: var(--red); font-family: var(--font-mono); font-weight: 600; }}
+.contrib-zero {{ color: var(--text-muted); font-family: var(--font-mono); }}
+
+/* Tooltip styles */
+.has-tooltip {{
+  position: relative;
+  cursor: help;
+  border-bottom: 1px dotted var(--text-muted);
+}}
+.has-tooltip:hover::after {{
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 0;
+  top: 100%;
+  margin-top: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: normal;
+  width: 300px;
+  z-index: 1000;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  pointer-events: none;
+}}
+.signal-badge.has-tooltip {{
+  border-bottom: none;
+}}
+.signal-badge.has-tooltip:hover::after {{
+  left: auto;
+  right: 0;
+  width: 260px;
+}}
+
+/* Trade targets */
+.targets-grid {{
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}}
+.target-box {{
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  border-left: 3px solid var(--border);
+}}
+.target-box.sl {{ border-left-color: var(--red); }}
+.target-box.tp1 {{ border-left-color: var(--green); }}
+.target-box.tp2 {{ border-left-color: var(--green-dim); }}
+.target-box.info {{ border-left-color: var(--blue); }}
+.target-label {{
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}}
+.target-value {{
+  font-size: 17px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  margin-top: 4px;
+}}
+
+/* Changes section */
+.changes-list {{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 24px;
+}}
+.change-tag {{
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+}}
+.change-up {{ color: var(--green); }}
+.change-down {{ color: var(--red); }}
+
+/* Recommendation note */
+.rec-note {{
+  background: var(--blue-bg);
+  border: 1px solid var(--blue-dim);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--blue);
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}}
+.rec-note .note-icon {{
+  font-size: 16px;
+  flex-shrink: 0;
+}}
+
+/* No results */
+.no-results {{
+  text-align: center;
+  padding: 80px 20px;
+  color: var(--text-muted);
+  font-size: 16px;
+}}
+
+/* Responsive */
+@media (max-width: 640px) {{
+  .header {{ padding: 16px; }}
+  .toolbar {{ padding: 12px 16px; }}
+  .grid-container {{ padding: 16px; }}
+  .grid {{ grid-template-columns: 1fr; }}
+  .modal-body {{ padding: 16px; }}
+  .overview-strip {{ grid-template-columns: repeat(2, 1fr); }}
+}}
+
+/* Scrollbar */
+::-webkit-scrollbar {{ width: 8px; }}
+::-webkit-scrollbar-track {{ background: var(--bg-primary); }}
+::-webkit-scrollbar-thumb {{ background: var(--border); border-radius: 4px; }}
+::-webkit-scrollbar-thumb:hover {{ background: var(--border-light); }}
+
+/* Light mode overrides */
+[data-theme="light"] ::-webkit-scrollbar-track {{ background: var(--bg-secondary); }}
+[data-theme="light"] ::-webkit-scrollbar-thumb {{ background: var(--border); }}
+[data-theme="light"] .chart-container {{ background: #1a1a2e; border-radius: var(--radius-sm); padding: 4px; }}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <h1><span>Ichimoku</span> Dashboard — {market_name}</h1>
+    <div class="subtitle">Scan date: {scan_date} &middot; {len(analyses)} stocks analyzed &middot; {currency}</div>
+  </div>
+  <div class="header-stats">
+    <div class="stat-pill stat-buy"><span class="dot"></span> {buy_count} BUY</div>
+    <div class="stat-pill stat-moderate"><span class="dot"></span> {moderate_count} MODERATE</div>
+    <div class="stat-pill stat-wait"><span class="dot"></span> {wait_count} WAIT</div>
+    <div class="stat-pill stat-avoid"><span class="dot"></span> {avoid_count} AVOID</div>
+    <button class="theme-toggle" id="themeToggle" title="Toggle light/dark mode" aria-label="Toggle theme">&#9790;</button>
+  </div>
+</div>
+
+<div class="toolbar">
+  <div class="filter-group">
+    <button class="filter-btn active" data-filter="ALL">All</button>
+    <button class="filter-btn" data-filter="BUY">Buy</button>
+    <button class="filter-btn" data-filter="BUY (MODERATE)">Moderate</button>
+    <button class="filter-btn" data-filter="WAIT">Wait</button>
+    <button class="filter-btn" data-filter="AVOID">Avoid</button>
+  </div>
+  <select class="sort-select" id="sortSelect">
+    <option value="recommendation">Sort: Recommendation</option>
+    <option value="score-desc">Sort: Score (High to Low)</option>
+    <option value="score-asc">Sort: Score (Low to High)</option>
+    <option value="confidence-desc">Sort: Confidence (High to Low)</option>
+    <option value="name-asc">Sort: Name (A-Z)</option>
+    <option value="price-desc">Sort: Price (High to Low)</option>
+  </select>
+</div>
+
+<div class="grid-container">
+  <div class="grid" id="stockGrid"></div>
+  <div class="no-results" id="noResults" style="display:none;">No stocks match the current filter.</div>
+</div>
+
+<div class="modal-backdrop" id="modalBackdrop">
+  <div class="modal" id="modal">
+    <div class="modal-header">
+      <h2 id="modalTitle"></h2>
+      <button class="modal-close" id="modalClose">&times;</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<script>
+const STOCKS = {stocks_data};
+
+const REC_PRIORITY = {{'BUY': 1, 'BUY (MODERATE)': 2, 'WAIT': 3, 'AVOID': 4}};
+
+let currentFilter = 'ALL';
+let currentSort = 'recommendation';
+
+function recClass(rec) {{
+  if (rec === 'BUY') return 'buy';
+  if (rec === 'BUY (MODERATE)') return 'moderate';
+  if (rec === 'WAIT') return 'wait';
+  return 'avoid';
+}}
+
+function confidenceColor(score) {{
+  if (score >= 80) return 'var(--green)';
+  if (score >= 50) return 'var(--amber)';
+  return 'var(--red)';
+}}
+
+function contribHtml(val) {{
+  if (val > 0) return '<span class="contrib-pos">+' + val.toFixed(1) + '</span>';
+  if (val < 0) return '<span class="contrib-neg">' + val.toFixed(1) + '</span>';
+  return '<span class="contrib-zero">0.0</span>';
+}}
+
+function signalClass(signal) {{
+  const s = signal.toUpperCase();
+  if (s.includes('BULLISH') || s.includes('CONFIRMS') || s.includes('STRONG SUPPORT') || s.includes('ABOVE')) return 'sig-bullish';
+  if (s.includes('BEARISH') || s.includes('OVEREXTENDED') || s.includes('BELOW') || s.includes('WEAK')) return 'sig-bearish';
+  return 'sig-neutral';
+}}
+
+function trendHtml(trend) {{
+  if (trend === 'BULLISH') return '<span class="card-trend trend-bullish"><span class="trend-arrow">&#9650;</span> Bullish</span>';
+  if (trend === 'BEARISH') return '<span class="card-trend trend-bearish"><span class="trend-arrow">&#9660;</span> Bearish</span>';
+  return '<span class="card-trend trend-neutral"><span class="trend-arrow">&#9654;</span> Neutral</span>';
+}}
+
+function strengthTag(strength) {{
+  if (strength === 'STRONG') return '<span class="strength-tag str-strong">Strong</span>';
+  if (strength === 'MODERATE') return '<span class="strength-tag str-moderate">Moderate</span>';
+  return '<span class="strength-tag str-weak">Weak</span>';
+}}
+
+function scoreDeltaHtml(s) {{
+  if (s.has_changes && s.changes.total) {{
+    const dir = s.changes.total.direction;
+    const prev = s.changes.total.prev;
+    const arrow = dir === 'up' ? '&#9650;' : '&#9660;';
+    const cls = dir === 'up' ? 'score-delta-up' : 'score-delta-down';
+    return `<span class="score-delta ${{cls}}">${{arrow}} from ${{prev >= 0 ? '+' : ''}}${{prev.toFixed(1)}}</span>`;
+  }}
+  return '';
+}}
+
+function formatPrice(price, currency) {{
+  if (currency === 'DKK') return price.toLocaleString('da-DK', {{minimumFractionDigits: 2, maximumFractionDigits: 2}}) + ' DKK';
+  return '$' + price.toLocaleString('en-US', {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
+}}
+
+function getFiltered() {{
+  let list = STOCKS;
+  if (currentFilter !== 'ALL') list = list.filter(s => s.recommendation === currentFilter);
+
+  list = [...list];
+  switch (currentSort) {{
+    case 'score-desc': list.sort((a, b) => b.total_score - a.total_score); break;
+    case 'score-asc': list.sort((a, b) => a.total_score - b.total_score); break;
+    case 'confidence-desc': list.sort((a, b) => b.confidence_score - a.confidence_score); break;
+    case 'name-asc': list.sort((a, b) => a.name.localeCompare(b.name)); break;
+    case 'price-desc': list.sort((a, b) => b.close_price - a.close_price); break;
+    default: list.sort((a, b) => (REC_PRIORITY[a.recommendation] || 9) - (REC_PRIORITY[b.recommendation] || 9));
+  }}
+  return list;
+}}
+
+function renderGrid() {{
+  const grid = document.getElementById('stockGrid');
+  const noResults = document.getElementById('noResults');
+  const filtered = getFiltered();
+
+  if (filtered.length === 0) {{
+    grid.innerHTML = '';
+    noResults.style.display = 'block';
+    return;
+  }}
+  noResults.style.display = 'none';
+
+  grid.innerHTML = filtered.map(s => `
+    <div class="card rec-${{recClass(s.recommendation)}}" onclick="openModal('${{s.ticker}}')">
+      ${{s.has_changes ? '<div class="change-dot" title="Signals changed from previous day"></div>' : ''}}
+      <div class="card-header">
+        <div>
+          <div class="card-ticker">${{s.ticker}}</div>
+          <div class="card-name" title="${{s.name}}">${{s.name}}</div>
+        </div>
+        <div class="badge badge-${{recClass(s.recommendation)}}">${{s.recommendation}}</div>
+      </div>
+      <div class="card-indicators">
+        ${{trendHtml(s.trend)}}
+        ${{strengthTag(s.strength)}}
+      </div>
+      <div class="card-body">
+        <div class="card-row">
+          <span class="card-label">Price</span>
+          <span class="card-value">${{formatPrice(s.close_price, s.currency)}}</span>
+        </div>
+        <div class="card-row">
+          <span class="card-label">Score</span>
+          <span class="card-value" style="color:${{s.total_score >= 0 ? 'var(--green)' : 'var(--red)'}}">${{s.total_score >= 0 ? '+' : ''}}${{s.total_score.toFixed(1)}}${{scoreDeltaHtml(s)}}</span>
+        </div>
+        <div>
+          <div class="card-row">
+            <span class="card-label">Confidence</span>
+            <span class="card-value" style="color:${{confidenceColor(s.confidence_score)}}">${{s.confidence_score}}% <small style="font-weight:400;font-size:11px">${{s.confidence_label}}</small></span>
+          </div>
+          <div class="confidence-bar"><div class="confidence-fill" style="width:${{s.confidence_score}}%;background:${{confidenceColor(s.confidence_score)}}"></div></div>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}}
+
+function openModal(ticker) {{
+  const s = STOCKS.find(x => x.ticker === ticker);
+  if (!s) return;
+
+  const rc = recClass(s.recommendation);
+  document.getElementById('modalTitle').innerHTML = `<span class="ticker">${{s.ticker}}</span> ${{s.name}} <span class="badge badge-${{rc}}">${{s.recommendation}}</span>`;
+
+  // Tooltip descriptions for component names
+  const compTooltips = {{
+    'kumo': 'Price vs Cloud (Kumo): Where price sits relative to the Ichimoku cloud. Above cloud = bullish (+2), below = bearish (-2), inside = neutral.',
+    'tk_cross': 'Tenkan-Kijun Cross: The Tenkan-sen (9-period) crossing above/below the Kijun-sen (26-period). Bullish cross = +1, bearish = -1.',
+    'cloud_color': 'Future Cloud Color: Whether Senkou Span A is above or below Senkou Span B projected 26 periods ahead. Green cloud = +1, red = -1.',
+    'chikou': 'Chikou Span (Lagging Line): Current price plotted 26 periods back vs past price action. Above = bullish (up to +2), below = bearish (down to -2).',
+    'kijun': 'Kijun-sen Support: Whether price is holding above or below the Kijun-sen (26-period baseline). Above = support (+1), below = resistance (-1).'
+  }};
+  const enhTooltips = {{
+    'volume_confirm': 'Volume Confirmation: Compares current volume to 20-day average. 1.5x+ confirms trend direction (\\u00b11), 0.5x or less = weak conviction (-0.5).',
+    'kumo_twist': 'Kumo Twist: Detects when Senkou Span A and B cross each other, signaling a potential major trend reversal. Bullish twist = +1, bearish = -1.',
+    'cloud_thickness': 'Cloud Thickness: Measures cloud width as % of price. Thin (<1%) = weak support/resistance, thick (>4%) = strong. Scores \\u00b11.',
+    'tk_location': 'TK Cross Location: Where the Tenkan/Kijun cross occurs relative to the cloud. Above cloud = strong (+1), inside = moderate (0), below = weak.',
+    'kijun_distance': 'Kijun Distance: How far price has extended from Kijun-sen. >8% = overextended risk (-1), >5% = mild caution (-0.5).',
+    'flat_lines': 'Flat Kijun/Tenkan Lines: Detects consolidation periods when both lines are flat. Both flat = consolidation warning (-0.5).'
+  }};
+
+  // Build component rows
+  const compNames = {{'kumo': 'Kumo (Cloud)', 'tk_cross': 'TK Cross', 'cloud_color': 'Cloud Color', 'chikou': 'Chikou Span', 'kijun': 'Kijun Support'}};
+  let compRows = '';
+  for (const [key, label] of Object.entries(compNames)) {{
+    const c = s.components[key];
+    if (!c) continue;
+    const compTip = (compTooltips[key] || '').replace(/"/g, '&quot;');
+    const sigTip = (c.description || '').replace(/"/g, '&quot;');
+    compRows += `<tr>
+      <td class="signal-name"><span class="has-tooltip" data-tooltip="${{compTip}}">${{label}}</span></td>
+      <td><span class="signal-badge ${{signalClass(c.signal)}} has-tooltip" data-tooltip="${{sigTip}}">${{c.signal}}</span></td>
+      <td>${{contribHtml(c.contribution)}}</td>
+    </tr>`;
+  }}
+
+  // Build enhancement rows
+  const enhNames = {{'volume_confirm': 'Volume', 'kumo_twist': 'Kumo Twist', 'cloud_thickness': 'Cloud Thickness', 'tk_location': 'TK Location', 'kijun_distance': 'Kijun Distance', 'flat_lines': 'Flat Lines'}};
+  let enhRows = '';
+  for (const [key, label] of Object.entries(enhNames)) {{
+    const e = s.enhancements[key];
+    if (!e) continue;
+    const enhTip = (enhTooltips[key] || '').replace(/"/g, '&quot;');
+    const sigTip = (e.description || '').replace(/"/g, '&quot;');
+    enhRows += `<tr>
+      <td class="signal-name"><span class="has-tooltip" data-tooltip="${{enhTip}}">${{label}}</span></td>
+      <td><span class="signal-badge ${{signalClass(e.signal)}} has-tooltip" data-tooltip="${{sigTip}}">${{e.signal}}</span></td>
+      <td>${{contribHtml(e.contribution)}}</td>
+    </tr>`;
+  }}
+
+  // Build trade targets
+  const t = s.trade_targets;
+  const targetsHtml = `
+    <div class="targets-grid">
+      <div class="target-box sl">
+        <div class="target-label">Stop Loss</div>
+        <div class="target-value" style="color:var(--red)">${{formatPrice(t.stop_loss_primary, s.currency)}}</div>
+      </div>
+      <div class="target-box tp1">
+        <div class="target-label">Take Profit 1 (1:1)</div>
+        <div class="target-value" style="color:var(--green)">${{formatPrice(t.take_profit_1, s.currency)}}</div>
+      </div>
+      <div class="target-box tp2">
+        <div class="target-label">Take Profit 2 (1:2)</div>
+        <div class="target-value" style="color:var(--green-dim)">${{formatPrice(t.take_profit_2, s.currency)}}</div>
+      </div>
+      <div class="target-box info">
+        <div class="target-label">Kijun Distance</div>
+        <div class="target-value" style="color:${{Math.abs(t.kijun_distance_pct) > 5 ? 'var(--amber)' : 'var(--text-primary)'}}">${{t.kijun_distance_pct.toFixed(1)}}%${{t.overextended ? ' ⚠' : ''}}</div>
+      </div>
+    </div>`;
+
+  // Build changes
+  let changesHtml = '';
+  if (s.has_changes) {{
+    changesHtml = '<div class="section-title">Day-over-Day Changes</div><div class="changes-list">';
+    for (const [key, ch] of Object.entries(s.changes)) {{
+      if (key === 'total') continue;
+      const arrow = ch.direction === 'up' ? '&#9650;' : '&#9660;';
+      const cls = ch.direction === 'up' ? 'change-up' : 'change-down';
+      changesHtml += `<span class="change-tag ${{cls}}">${{arrow}} ${{key.replace('_', ' ')}} ${{ch.prev.toFixed(1)}} &rarr; ${{ch.current.toFixed(1)}}</span>`;
+    }}
+    changesHtml += '</div>';
+  }}
+
+  const chartHtml = s.chart_file
+    ? `<div class="chart-container"><img src="${{s.chart_file}}" alt="${{s.ticker}} Ichimoku Chart" loading="lazy"></div>`
+    : '<div class="chart-container"><div class="chart-placeholder">Chart not available</div></div>';
+
+  document.getElementById('modalBody').innerHTML = `
+    <div class="overview-strip">
+      <div class="overview-item">
+        <div class="ov-label">Price</div>
+        <div class="ov-value">${{formatPrice(s.close_price, s.currency)}}</div>
+      </div>
+      <div class="overview-item">
+        <div class="ov-label">Score</div>
+        <div class="ov-value" style="color:${{s.total_score >= 0 ? 'var(--green)' : 'var(--red)'}}">${{s.total_score >= 0 ? '+' : ''}}${{s.total_score.toFixed(1)}}</div>
+      </div>
+      <div class="overview-item">
+        <div class="ov-label">Confidence</div>
+        <div class="ov-value" style="color:${{confidenceColor(s.confidence_score)}}">${{s.confidence_score}}%</div>
+      </div>
+      <div class="overview-item">
+        <div class="ov-label">Trend</div>
+        <div class="ov-value">${{s.trend}}</div>
+      </div>
+      <div class="overview-item">
+        <div class="ov-label">Strength</div>
+        <div class="ov-value">${{s.strength}}</div>
+      </div>
+    </div>
+
+    ${{s.recommendation_note ? `<div class="rec-note"><span class="note-icon">&#9432;</span> ${{s.recommendation_note}}</div>` : ''}}
+
+    ${{chartHtml}}
+
+    <div class="section-title">Trade Targets</div>
+    ${{targetsHtml}}
+
+    <div class="signals-grid">
+      <div>
+        <div class="section-title">Core Components</div>
+        <table class="signal-table">
+          <tr><th>Component</th><th>Signal</th><th>Score</th></tr>
+          ${{compRows}}
+        </table>
+      </div>
+      <div>
+        <div class="section-title">Enhancement Signals</div>
+        <table class="signal-table">
+          <tr><th>Signal</th><th>Status</th><th>Score</th></tr>
+          ${{enhRows}}
+        </table>
+      </div>
+    </div>
+
+    ${{changesHtml}}
+  `;
+
+  document.getElementById('modalBackdrop').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}}
+
+function closeModal() {{
+  document.getElementById('modalBackdrop').classList.remove('open');
+  document.body.style.overflow = '';
+}}
+
+// Event listeners
+document.getElementById('modalClose').addEventListener('click', closeModal);
+document.getElementById('modalBackdrop').addEventListener('click', e => {{
+  if (e.target === document.getElementById('modalBackdrop')) closeModal();
+}});
+document.addEventListener('keydown', e => {{ if (e.key === 'Escape') closeModal(); }});
+
+document.querySelectorAll('.filter-btn').forEach(btn => {{
+  btn.addEventListener('click', () => {{
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentFilter = btn.dataset.filter;
+    renderGrid();
+  }});
+}});
+
+document.getElementById('sortSelect').addEventListener('change', e => {{
+  currentSort = e.target.value;
+  renderGrid();
+}});
+
+// Initial render
+renderGrid();
+
+// Theme toggle
+(function() {{
+  const toggle = document.getElementById('themeToggle');
+  const KEY = 'ichimoku-theme';
+  function applyTheme(theme) {{
+    document.documentElement.setAttribute('data-theme', theme);
+    toggle.innerHTML = theme === 'light' ? '&#9728;' : '&#9790;';
+    toggle.title = theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode';
+  }}
+  const saved = localStorage.getItem(KEY) || 'dark';
+  if (saved === 'light') applyTheme('light');
+  toggle.addEventListener('click', function() {{
+    const current = document.documentElement.getAttribute('data-theme');
+    const next = current === 'light' ? 'dark' : 'light';
+    applyTheme(next);
+    localStorage.setItem(KEY, next);
+  }});
+}})();
+</script>
+</body>
+</html>"""
+
+    filepath = os.path.join(output_folder, filename)
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.write(html)
+
+    return filepath
+
+
+def generate_index_page(market_summaries, output_folder):
+    """
+    Generate an index.html page linking to all market dashboards.
+
+    Parameters:
+    -----------
+    market_summaries : list
+        List of dicts with keys: market_key, market_name, total, buy, moderate, wait, avoid, dashboard_file
+    output_folder : str
+        Base output folder
+    """
+    scan_date = datetime.now().strftime('%Y-%m-%d')
+    total_stocks = sum(m['total'] for m in market_summaries)
+
+    cards_html = ''
+    for m in market_summaries:
+        cards_html += f"""
+        <a href="{m['market_key']}/{m['dashboard_file']}" class="market-card">
+          <h2>{m['market_name']}</h2>
+          <div class="market-count">{m['total']} stocks</div>
+          <div class="market-pills">
+            <span class="mp mp-buy">{m['buy']} BUY</span>
+            <span class="mp mp-mod">{m['moderate']} MOD</span>
+            <span class="mp mp-wait">{m['wait']} WAIT</span>
+            <span class="mp mp-avoid">{m['avoid']} AVOID</span>
+          </div>
+        </a>"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ichimoku Cloud Scanner</title>
+<style>
+:root {{
+  --bg: #0d1117; --bg2: #161b22; --bg3: #1c2333;
+  --border: #30363d; --text: #e6edf3; --text2: #8b949e; --text3: #6e7681;
+  --blue: #58a6ff; --green: #00ff88; --amber: #ffaa00; --yellow: #f0e040; --red: #ff4757;
+  --font: 'Segoe UI', -apple-system, sans-serif; --mono: 'SF Mono', 'Consolas', monospace;
+}}
+[data-theme="light"] {{
+  --bg: #ffffff; --bg2: #f6f8fa; --bg3: #eef1f5;
+  --border: #d0d7de; --text: #1f2328; --text2: #57606a; --text3: #8b949e;
+  --blue: #0969da; --green: #1a7f37; --amber: #bf8700; --yellow: #7d6e00; --red: #cf222e;
+}}
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ background:var(--bg); color:var(--text); font-family:var(--font); min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:60px 24px; }}
+h1 {{ font-size:32px; font-weight:700; margin-bottom:6px; }}
+h1 span {{ color:var(--blue); }}
+.subtitle {{ color:var(--text2); font-size:14px; margin-bottom:48px; }}
+.markets {{ display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:20px; width:100%; max-width:900px; }}
+.market-card {{
+  background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:28px;
+  text-decoration:none; color:var(--text); transition:all .2s ease;
+}}
+.market-card:hover {{ border-color:var(--blue); transform:translateY(-3px); box-shadow:0 8px 32px rgba(0,0,0,.4); }}
+.market-card h2 {{ font-size:20px; margin-bottom:4px; }}
+.market-count {{ color:var(--text2); font-size:14px; margin-bottom:16px; }}
+.market-pills {{ display:flex; gap:8px; flex-wrap:wrap; }}
+.mp {{ padding:4px 10px; border-radius:12px; font-size:12px; font-weight:600; font-family:var(--mono); }}
+.mp-buy {{ background:#00ff8818; color:var(--green); }}
+.mp-mod {{ background:#ffaa0018; color:var(--amber); }}
+.mp-wait {{ background:#f0e04018; color:var(--yellow); }}
+.mp-avoid {{ background:#ff475718; color:var(--red); }}
+.footer {{ margin-top:60px; color:var(--text3); font-size:12px; }}
+.theme-toggle {{
+  position:fixed; top:20px; right:20px;
+  width:40px; height:40px; border-radius:50%;
+  border:1px solid var(--border); background:var(--bg2); color:var(--text2);
+  cursor:pointer; font-size:18px; display:flex; align-items:center; justify-content:center;
+  transition:all .2s ease; z-index:100;
+}}
+.theme-toggle:hover {{ border-color:var(--text2); color:var(--text); }}
+[data-theme="light"] .market-card:hover {{ box-shadow:0 8px 32px rgba(0,0,0,.12); }}
+</style>
+</head>
+<body>
+  <button class="theme-toggle" id="themeToggle" title="Toggle light/dark mode" aria-label="Toggle theme">&#9790;</button>
+  <h1><span>Ichimoku</span> Cloud Scanner</h1>
+  <div class="subtitle">Scan date: {scan_date} &middot; {total_stocks} stocks across {len(market_summaries)} markets</div>
+  <div class="markets">{cards_html}</div>
+  <div class="footer">Generated by Ichimoku Cloud Scanner</div>
+<script>
+(function() {{
+  var toggle = document.getElementById('themeToggle');
+  var KEY = 'ichimoku-theme';
+  function applyTheme(theme) {{
+    document.documentElement.setAttribute('data-theme', theme);
+    toggle.innerHTML = theme === 'light' ? '&#9728;' : '&#9790;';
+    toggle.title = theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode';
+  }}
+  var saved = localStorage.getItem(KEY) || 'dark';
+  if (saved === 'light') applyTheme('light');
+  toggle.addEventListener('click', function() {{
+    var current = document.documentElement.getAttribute('data-theme');
+    var next = current === 'light' ? 'dark' : 'light';
+    applyTheme(next);
+    localStorage.setItem(KEY, next);
+  }});
+}})();
+</script>
+</body>
+</html>"""
+
+    filepath = os.path.join(output_folder, 'index.html')
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.write(html)
+
+    return filepath
+
+
 def process_stock(stock_info, period, interval, save_csv, save_chart, charts_folder=None, data_folder=None, stock_index=0, stock_total=0):
     """
     Process a single stock: download data and create chart
@@ -1698,6 +2977,8 @@ def main():
     print(f"Ichimoku Cloud Scanner — {total_stocks} stocks across {len(markets)} market(s) ({period}, {interval})")
 
     # Process each market
+    market_summaries = []
+
     for market_key, market_data in markets.items():
         market_name = market_data.get('name', market_key)
         currency = market_data.get('currency', 'USD')
@@ -1743,12 +3024,36 @@ def main():
             print(f"  Generating reports for {market_name}...", end=" ", flush=True)
             report_filename = f"ichimoku_trading_report_{market_key}.txt"
             pdf_filename = f"ichimoku_report_{market_key}.pdf"
+            dashboard_filename = f"ichimoku_dashboard_{market_key}.html"
             generate_report(analyses, filename=report_filename, output_folder=market_output_folder,
                           market_name=market_name, currency=currency)
             # Generate PDF report with charts
             generate_pdf_report(analyses, charts_folder, market_output_folder,
                               filename=pdf_filename, market_name=market_name, currency=currency)
+            # Generate HTML dashboard
+            generate_html_dashboard(analyses, charts_folder, market_output_folder,
+                                   filename=dashboard_filename, market_name=market_name, currency=currency)
             print("OK")
+
+            # Collect summary for index page
+            rec_counts = {}
+            for a in analyses:
+                rec = a['recommendation']
+                rec_counts[rec] = rec_counts.get(rec, 0) + 1
+            market_summaries.append({
+                'market_key': market_key,
+                'market_name': market_name,
+                'total': len(analyses),
+                'buy': rec_counts.get('BUY', 0),
+                'moderate': rec_counts.get('BUY (MODERATE)', 0),
+                'wait': rec_counts.get('WAIT', 0),
+                'avoid': rec_counts.get('AVOID', 0),
+                'dashboard_file': dashboard_filename
+            })
+
+    # Generate index page linking all market dashboards
+    if market_summaries:
+        generate_index_page(market_summaries, base_output_folder)
 
     print(f"\nAll markets processed. Output in: {base_output_folder}/")
 
