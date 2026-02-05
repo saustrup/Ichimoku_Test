@@ -439,17 +439,27 @@ def analyze_single_day(df, day_idx, chikou_offset):
     else:
         components['cloud_thickness'] = 0
 
-    # Enhancement 4: TK cross location relative to cloud
+    # Enhancement 4: TK cross location relative to cloud (graduated scale: below=0.5, inside=0.75, above=1.0)
     if (pd.notna(day_data.get('tenkan_sen')) and pd.notna(day_data.get('kijun_sen'))
             and pd.notna(day_data.get('senkou_span_a')) and pd.notna(day_data.get('senkou_span_b'))):
         tk_midpoint = (day_data['tenkan_sen'] + day_data['kijun_sen']) / 2
         cloud_top = max(day_data['senkou_span_a'], day_data['senkou_span_b'])
         cloud_bottom = min(day_data['senkou_span_a'], day_data['senkou_span_b'])
         tk_dir = components.get('tk_cross', 0)
-        if tk_dir > 0 and tk_midpoint > cloud_top:
-            components['tk_location'] = 1
-        elif tk_dir < 0 and tk_midpoint < cloud_bottom:
-            components['tk_location'] = -1
+        if tk_dir > 0:  # Bullish TK cross
+            if tk_midpoint > cloud_top:
+                components['tk_location'] = 1.0    # Strong: above cloud
+            elif tk_midpoint >= cloud_bottom:
+                components['tk_location'] = 0.75   # Moderate: inside cloud
+            else:
+                components['tk_location'] = 0.5    # Weak but valid: below cloud
+        elif tk_dir < 0:  # Bearish TK cross
+            if tk_midpoint < cloud_bottom:
+                components['tk_location'] = -1.0   # Strong: below cloud
+            elif tk_midpoint <= cloud_top:
+                components['tk_location'] = -0.75  # Moderate: inside cloud
+            else:
+                components['tk_location'] = -0.5   # Weak but valid: above cloud
         else:
             components['tk_location'] = 0
     else:
@@ -519,8 +529,9 @@ def analyze_ichimoku_signals(df, ticker, stock_name):
         'date': latest.name.strftime('%Y-%m-%d'),
         'close_price': latest['Close'],
         'signals': [],
-        'components': {},  # Store each Ichimoku component's contribution
-        'enhancements': {},  # Enhancement signal layer
+        'components': {},  # Store each Ichimoku component's contribution (CONDITIONS)
+        'enhancements': {},  # Enhancement signal layer (mostly CONDITIONS)
+        'event_signals': {},  # True SIGNALS - events that triggered today
         'prev_components': prev_day_components,  # Store previous day for comparison
         'changes': {},  # Track which components changed
         'trend': 'NEUTRAL',
@@ -757,7 +768,7 @@ def analyze_ichimoku_signals(df, ticker, stock_name):
         enh_thickness['description'] = "Cloud thickness data unavailable"
     analysis['enhancements']['cloud_thickness'] = enh_thickness
 
-    # Enhancement 4: TK Cross Location
+    # Enhancement 4: TK Cross Location (graduated scale: below=0.5, inside=0.75, above=1.0)
     enh_tk_loc = {'name': 'TK Cross Location', 'signal': 'NEUTRAL', 'description': '', 'contribution': 0}
     if (pd.notna(latest['tenkan_sen']) and pd.notna(latest['kijun_sen'])
             and pd.notna(latest['senkou_span_a']) and pd.notna(latest['senkou_span_b'])):
@@ -766,20 +777,34 @@ def analyze_ichimoku_signals(df, ticker, stock_name):
         cloud_bottom = min(latest['senkou_span_a'], latest['senkou_span_b'])
         tk_direction = analysis['components']['tk_cross']['contribution']
 
-        if tk_direction > 0 and tk_midpoint > cloud_top:
-            enh_tk_loc['signal'] = 'ABOVE CLOUD'
-            enh_tk_loc['description'] = f"Bullish TK cross above cloud — strong bullish signal"
-            enh_tk_loc['contribution'] = 1
-        elif tk_direction < 0 and tk_midpoint < cloud_bottom:
-            enh_tk_loc['signal'] = 'BELOW CLOUD'
-            enh_tk_loc['description'] = f"Bearish TK cross below cloud — strong bearish signal"
-            enh_tk_loc['contribution'] = -1
-        elif cloud_bottom <= tk_midpoint <= cloud_top:
-            enh_tk_loc['signal'] = 'INSIDE CLOUD'
-            enh_tk_loc['description'] = f"TK cross inside cloud — weakened signal"
-            enh_tk_loc['contribution'] = 0
+        if tk_direction > 0:  # Bullish TK cross
+            if tk_midpoint > cloud_top:
+                enh_tk_loc['signal'] = 'ABOVE CLOUD'
+                enh_tk_loc['description'] = "Bullish TK cross above cloud — strong signal"
+                enh_tk_loc['contribution'] = 1.0
+            elif tk_midpoint >= cloud_bottom:
+                enh_tk_loc['signal'] = 'INSIDE CLOUD'
+                enh_tk_loc['description'] = "Bullish TK cross inside cloud — moderate signal"
+                enh_tk_loc['contribution'] = 0.75
+            else:
+                enh_tk_loc['signal'] = 'BELOW CLOUD'
+                enh_tk_loc['description'] = "Bullish TK cross below cloud — weak signal"
+                enh_tk_loc['contribution'] = 0.5
+        elif tk_direction < 0:  # Bearish TK cross
+            if tk_midpoint < cloud_bottom:
+                enh_tk_loc['signal'] = 'BELOW CLOUD'
+                enh_tk_loc['description'] = "Bearish TK cross below cloud — strong signal"
+                enh_tk_loc['contribution'] = -1.0
+            elif tk_midpoint <= cloud_top:
+                enh_tk_loc['signal'] = 'INSIDE CLOUD'
+                enh_tk_loc['description'] = "Bearish TK cross inside cloud — moderate signal"
+                enh_tk_loc['contribution'] = -0.75
+            else:
+                enh_tk_loc['signal'] = 'ABOVE CLOUD'
+                enh_tk_loc['description'] = "Bearish TK cross above cloud — weak signal"
+                enh_tk_loc['contribution'] = -0.5
         else:
-            enh_tk_loc['description'] = f"TK cross outside cloud, direction mixed"
+            enh_tk_loc['description'] = "No TK cross direction"
             enh_tk_loc['contribution'] = 0
     else:
         enh_tk_loc['description'] = "TK/Cloud data unavailable"
@@ -834,6 +859,125 @@ def analyze_ichimoku_signals(df, ticker, stock_name):
             enh_flat['description'] = "Tenkan-sen flat — short-term momentum stalling"
             enh_flat['contribution'] = 0
     analysis['enhancements']['flat_lines'] = enh_flat
+
+    # --- EVENT SIGNALS (only triggered when actual event occurs) ---
+    # These are true signals that detect day-over-day changes/crossovers
+
+    # Signal 1: TK Cross Event (Tenkan actually crosses Kijun)
+    sig_tk_cross = {'name': 'TK Cross', 'triggered': False, 'type': None, 'description': ''}
+    if len(df) >= 2 and pd.notna(latest['tenkan_sen']) and pd.notna(latest['kijun_sen']):
+        prev = df.iloc[-2]
+        if pd.notna(prev.get('tenkan_sen')) and pd.notna(prev.get('kijun_sen')):
+            prev_tk_above = prev['tenkan_sen'] > prev['kijun_sen']
+            curr_tk_above = latest['tenkan_sen'] > latest['kijun_sen']
+            if prev_tk_above != curr_tk_above:
+                sig_tk_cross['triggered'] = True
+                if curr_tk_above:
+                    sig_tk_cross['type'] = 'BULLISH'
+                    sig_tk_cross['description'] = f"Bullish TK Cross — Tenkan ({latest['tenkan_sen']:.2f}) crossed above Kijun ({latest['kijun_sen']:.2f})"
+                else:
+                    sig_tk_cross['type'] = 'BEARISH'
+                    sig_tk_cross['description'] = f"Bearish TK Cross — Tenkan ({latest['tenkan_sen']:.2f}) crossed below Kijun ({latest['kijun_sen']:.2f})"
+    analysis['event_signals']['tk_cross'] = sig_tk_cross
+
+    # Signal 2: Kumo Breakout (Price crosses cloud boundary)
+    sig_kumo_break = {'name': 'Kumo Breakout', 'triggered': False, 'type': None, 'description': ''}
+    if len(df) >= 2 and pd.notna(latest['senkou_span_a']) and pd.notna(latest['senkou_span_b']):
+        prev = df.iloc[-2]
+        if (pd.notna(prev.get('senkou_span_a')) and pd.notna(prev.get('senkou_span_b'))
+                and pd.notna(prev.get('Close'))):
+            # Determine previous position
+            prev_cloud_top = max(prev['senkou_span_a'], prev['senkou_span_b'])
+            prev_cloud_bottom = min(prev['senkou_span_a'], prev['senkou_span_b'])
+            if prev['Close'] > prev_cloud_top:
+                prev_pos = 'ABOVE'
+            elif prev['Close'] < prev_cloud_bottom:
+                prev_pos = 'BELOW'
+            else:
+                prev_pos = 'INSIDE'
+
+            # Determine current position
+            curr_cloud_top = max(latest['senkou_span_a'], latest['senkou_span_b'])
+            curr_cloud_bottom = min(latest['senkou_span_a'], latest['senkou_span_b'])
+            if latest['Close'] > curr_cloud_top:
+                curr_pos = 'ABOVE'
+            elif latest['Close'] < curr_cloud_bottom:
+                curr_pos = 'BELOW'
+            else:
+                curr_pos = 'INSIDE'
+
+            # Detect breakout
+            if prev_pos != curr_pos:
+                sig_kumo_break['triggered'] = True
+                if curr_pos == 'ABOVE' and prev_pos in ['INSIDE', 'BELOW']:
+                    sig_kumo_break['type'] = 'BULLISH BREAKOUT'
+                    sig_kumo_break['description'] = f"Bullish Kumo Breakout — Price broke above cloud (was {prev_pos.lower()})"
+                elif curr_pos == 'BELOW' and prev_pos in ['INSIDE', 'ABOVE']:
+                    sig_kumo_break['type'] = 'BEARISH BREAKDOWN'
+                    sig_kumo_break['description'] = f"Bearish Kumo Breakdown — Price broke below cloud (was {prev_pos.lower()})"
+                elif curr_pos == 'INSIDE':
+                    sig_kumo_break['type'] = 'ENTERED CLOUD'
+                    sig_kumo_break['description'] = f"Price entered cloud from {prev_pos.lower()} — trend weakening"
+    analysis['event_signals']['kumo_breakout'] = sig_kumo_break
+
+    # Signal 3: Chikou Breakout (Chikou crosses price or cloud from 26 periods ago)
+    sig_chikou_break = {'name': 'Chikou Breakout', 'triggered': False, 'type': None, 'description': ''}
+    chikou_offset = 26
+    if len(df) >= chikou_offset + 2:
+        # Current chikou position (chikou is current close, compared to price 26 bars ago)
+        curr_chikou = latest['Close']
+        price_26_ago = df.iloc[-chikou_offset - 1]['Close']
+        cloud_26_ago_a = df.iloc[-chikou_offset - 1].get('senkou_span_a')
+        cloud_26_ago_b = df.iloc[-chikou_offset - 1].get('senkou_span_b')
+
+        # Previous chikou position (previous day's close compared to price 27 bars ago)
+        prev_chikou = df.iloc[-2]['Close']
+        price_27_ago = df.iloc[-chikou_offset - 2]['Close']
+        cloud_27_ago_a = df.iloc[-chikou_offset - 2].get('senkou_span_a')
+        cloud_27_ago_b = df.iloc[-chikou_offset - 2].get('senkou_span_b')
+
+        if (pd.notna(price_26_ago) and pd.notna(price_27_ago) and pd.notna(prev_chikou)):
+            # Check if chikou crossed price
+            prev_chikou_above_price = prev_chikou > price_27_ago
+            curr_chikou_above_price = curr_chikou > price_26_ago
+            if prev_chikou_above_price != curr_chikou_above_price:
+                sig_chikou_break['triggered'] = True
+                if curr_chikou_above_price:
+                    sig_chikou_break['type'] = 'BULLISH'
+                    sig_chikou_break['description'] = f"Bullish Chikou Breakout — Chikou crossed above price from 26 periods ago"
+                else:
+                    sig_chikou_break['type'] = 'BEARISH'
+                    sig_chikou_break['description'] = f"Bearish Chikou Breakdown — Chikou crossed below price from 26 periods ago"
+
+            # Also check cloud crossover if available
+            if (not sig_chikou_break['triggered'] and pd.notna(cloud_26_ago_a) and pd.notna(cloud_26_ago_b)
+                    and pd.notna(cloud_27_ago_a) and pd.notna(cloud_27_ago_b)):
+                prev_cloud_top = max(cloud_27_ago_a, cloud_27_ago_b)
+                prev_cloud_bottom = min(cloud_27_ago_a, cloud_27_ago_b)
+                curr_cloud_top = max(cloud_26_ago_a, cloud_26_ago_b)
+                curr_cloud_bottom = min(cloud_26_ago_a, cloud_26_ago_b)
+
+                prev_above_cloud = prev_chikou > prev_cloud_top
+                curr_above_cloud = curr_chikou > curr_cloud_top
+                if prev_above_cloud != curr_above_cloud:
+                    sig_chikou_break['triggered'] = True
+                    if curr_above_cloud:
+                        sig_chikou_break['type'] = 'BULLISH (CLOUD)'
+                        sig_chikou_break['description'] = f"Chikou broke above cloud from 26 periods ago"
+                    else:
+                        sig_chikou_break['type'] = 'BEARISH (CLOUD)'
+                        sig_chikou_break['description'] = f"Chikou broke below cloud from 26 periods ago"
+    analysis['event_signals']['chikou_breakout'] = sig_chikou_break
+
+    # Copy Kumo Twist from enhancements to event_signals (it's already a proper signal)
+    kumo_twist_enh = analysis['enhancements'].get('kumo_twist', {})
+    sig_kumo_twist = {
+        'name': 'Kumo Twist',
+        'triggered': kumo_twist_enh.get('signal', 'NONE') != 'NONE',
+        'type': kumo_twist_enh.get('signal') if kumo_twist_enh.get('signal') != 'NONE' else None,
+        'description': kumo_twist_enh.get('description', '')
+    }
+    analysis['event_signals']['kumo_twist'] = sig_kumo_twist
 
     # --- Confidence Score ---
     all_contributions = [c['contribution'] for c in analysis['components'].values()]
@@ -983,34 +1127,32 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
 
     report_lines.append("LONG-ONLY ICHIMOKU TRADING RULES:")
     report_lines.append("-" * 80)
-    report_lines.append("BULLISH SIGNALS (Favorable for Long Entry):")
-    report_lines.append("   - Price above the cloud")
-    report_lines.append("   - Tenkan-sen above Kijun-sen")
-    report_lines.append("   - Chikou Span above price and cloud from 26 periods ago")
-    report_lines.append("   - Cloud is green (Senkou Span A > Senkou Span B)")
     report_lines.append("")
-    report_lines.append("WARNING SIGNALS (Avoid Long Entry):")
-    report_lines.append("   - Price below the cloud")
-    report_lines.append("   - Tenkan-sen below Kijun-sen")
-    report_lines.append("   - Chikou Span below price from 26 periods ago")
-    report_lines.append("   - Cloud is red (Senkou Span A < Senkou Span B)")
+    report_lines.append("CONDITIONS (Static States - Always Shown):")
+    report_lines.append("   Bullish: Price above cloud, Tenkan > Kijun, Chikou above price/cloud, Green cloud")
+    report_lines.append("   Bearish: Price below cloud, Tenkan < Kijun, Chikou below price/cloud, Red cloud")
+    report_lines.append("")
+    report_lines.append("SIGNALS (Events - Only Shown When Triggered):")
+    report_lines.append("   - TK Cross: Tenkan crosses Kijun (bullish/bearish crossover event)")
+    report_lines.append("   - Kumo Breakout: Price crosses cloud boundary (enters/exits cloud)")
+    report_lines.append("   - Chikou Breakout: Chikou crosses price or cloud from 26 periods ago")
+    report_lines.append("   - Kumo Twist: Senkou A/B crossover (future cloud color change)")
     report_lines.append("")
     report_lines.append("RECOMMENDATIONS:")
-    report_lines.append("   - BUY: Strong bullish signals - favorable for long entry")
-    report_lines.append("   - BUY (MODERATE): Good bullish signals - consider long entry")
-    report_lines.append("   - WAIT: Weak or neutral signals - wait for better setup")
-    report_lines.append("   - AVOID: Bearish signals - not suitable for long entry")
+    report_lines.append("   - BUY: Strong bullish conditions - favorable for long entry")
+    report_lines.append("   - BUY (MODERATE): Good bullish conditions - consider long entry")
+    report_lines.append("   - WAIT: Weak or neutral conditions - wait for better setup")
+    report_lines.append("   - AVOID: Bearish conditions - not suitable for long entry")
     report_lines.append("")
-    report_lines.append("ENHANCEMENT SIGNALS:")
-    report_lines.append("   - Volume Confirmation: confirms/weakens trend based on 20-day volume average")
-    report_lines.append("   - Kumo Twist: Senkou A/B crossover signals major trend change")
+    report_lines.append("ADDITIONAL FACTORS:")
+    report_lines.append("   - Volume: confirms/weakens trend based on 20-day average")
     report_lines.append("   - Cloud Thickness: thin cloud = weak S/R, thick = strong S/R")
-    report_lines.append("   - TK Cross Location: TK cross above cloud = strong, inside = weak")
-    report_lines.append("   - Kijun Distance: overextension risk when price deviates >8% from Kijun")
+    report_lines.append("   - TK Location: position relative to cloud affects signal strength")
+    report_lines.append("   - Kijun Distance: overextension risk when price >8% from Kijun")
     report_lines.append("   - Flat Lines: flat Kijun/Tenkan indicates consolidation phase")
     report_lines.append("")
     report_lines.append("CONFIDENCE SCORE:")
-    report_lines.append("   Percentage of all signals (11 total) agreeing on direction")
+    report_lines.append("   Percentage of all conditions agreeing on direction")
     report_lines.append("   HIGH (>=80%) | MODERATE (50-79%) | LOW (<50%)")
     report_lines.append("="*80)
     report_lines.append("")
@@ -1093,12 +1235,39 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
 
         report_lines.append(f"OVERALL: {analysis['trend']} | Strength: {analysis['strength']} | Score: {total_str}")
         report_lines.append(f"LONG ENTRY RECOMMENDATION: {analysis['recommendation']}")
+        # --- EVENT SIGNALS (only show if triggered) ---
+        event_signals = analysis.get('event_signals', {})
+        triggered_signals = [(k, v) for k, v in event_signals.items() if v.get('triggered')]
+        if triggered_signals:
+            report_lines.append("")
+            report_lines.append("*** EVENT SIGNALS TRIGGERED ***")
+            report_lines.append("-" * 80)
+            for sig_key, sig in triggered_signals:
+                signal_type = sig.get('type', 'UNKNOWN')
+                if 'BULLISH' in signal_type.upper():
+                    indicator = "▲"
+                elif 'BEARISH' in signal_type.upper():
+                    indicator = "▼"
+                else:
+                    indicator = "●"
+                report_lines.append(f"  {indicator} {sig['name']}: {signal_type}")
+                report_lines.append(f"    {sig['description']}")
+                report_lines.append("")
+
+        # --- CONDITIONS (Static States) ---
         report_lines.append("")
-        report_lines.append("COMPONENT BREAKDOWN:")
+        report_lines.append("CONDITIONS (Current State):")
         report_lines.append("-" * 80)
 
-        # Display each component
+        # Display each component as a condition
         component_order = ['kumo', 'tk_cross', 'cloud_color', 'chikou', 'kijun']
+        component_display_names = {
+            'kumo': 'Price vs Cloud (Kumo)',
+            'tk_cross': 'TK Relationship',
+            'cloud_color': 'Cloud Color',
+            'chikou': 'Chikou Position',
+            'kijun': 'Kijun Support'
+        }
         for comp_key in component_order:
             if comp_key in analysis.get('components', {}):
                 comp = analysis['components'][comp_key]
@@ -1123,16 +1292,17 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
                     arrow = "↑" if direction == 'up' else "↓"
                     change_info = f" (was {prev_val:+.1f} {arrow})"
 
-                report_lines.append(f"  {comp['name']}{changed_marker}")
-                report_lines.append(f"    Signal: {comp['signal']} ({for_long} for Long)")
+                display_name = component_display_names.get(comp_key, comp['name'])
+                report_lines.append(f"  {display_name}{changed_marker}")
+                report_lines.append(f"    State: {comp['signal']} ({for_long} for Long)")
                 report_lines.append(f"    {comp['description']}")
-                report_lines.append(f"    Contribution: {indicator}{abs(comp['contribution']):.1f}{change_info}")
+                report_lines.append(f"    Score: {indicator}{abs(comp['contribution']):.1f}{change_info}")
                 report_lines.append("")
 
-        # Enhancement signals
-        report_lines.append("ENHANCEMENT SIGNALS:")
+        # --- ADDITIONAL FACTORS (enhancements, excluding kumo_twist which is now in signals) ---
+        report_lines.append("ADDITIONAL FACTORS:")
         report_lines.append("-" * 80)
-        enhancement_order = ['volume_confirm', 'kumo_twist', 'cloud_thickness',
+        enhancement_order = ['volume_confirm', 'cloud_thickness',
                              'tk_location', 'kijun_distance', 'flat_lines']
         for enh_key in enhancement_order:
             if enh_key in analysis.get('enhancements', {}):
@@ -1147,9 +1317,9 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
                     change_info = f" (was {prev_val:+.1f} {arrow})"
 
                 report_lines.append(f"  {enh['name']}{changed_marker}")
-                report_lines.append(f"    Signal: {enh['signal']}")
+                report_lines.append(f"    State: {enh['signal']}")
                 report_lines.append(f"    {enh['description']}")
-                report_lines.append(f"    Enhancement: {enh['contribution']:+.1f}{change_info}")
+                report_lines.append(f"    Factor: {enh['contribution']:+.1f}{change_info}")
                 report_lines.append("")
 
         # Confidence score
@@ -1415,14 +1585,42 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
             normal_style
         ))
 
-        # Component breakdown table
-        comp_data = [['Component', 'Signal', 'Contribution', 'Changed?']]
+        # Event Signals section (only if triggered)
+        event_signals = analysis.get('event_signals', {})
+        triggered_signals = [(k, v) for k, v in event_signals.items() if v.get('triggered')]
+        if triggered_signals:
+            content.append(Spacer(1, 0.1*inch))
+            content.append(Paragraph("<b>EVENT SIGNALS TRIGGERED</b>", heading_style))
+            signal_data = [['Signal', 'Type', 'Description']]
+            for sig_key, sig in triggered_signals:
+                sig_type = sig.get('type', 'UNKNOWN')
+                signal_data.append([
+                    sig.get('name', sig_key),
+                    sig_type,
+                    sig.get('description', '')[:60] + '...' if len(sig.get('description', '')) > 60 else sig.get('description', '')
+                ])
+            signal_table = Table(signal_data, colWidths=[1.5*inch, 1.5*inch, 3.5*inch])
+            signal_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.darkgreen),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.lightgreen),
+            ]))
+            content.append(signal_table)
+            content.append(Spacer(1, 0.1*inch))
+
+        # Conditions table (formerly Component breakdown)
+        content.append(Paragraph("<b>CONDITIONS (Current State)</b>", normal_style))
+        comp_data = [['Condition', 'State', 'Score', 'Changed?']]
         component_names = {
             'kumo': 'Price vs Cloud (Kumo)',
-            'tk_cross': 'Tenkan vs Kijun',
-            'cloud_color': 'Future Cloud Color',
-            'chikou': 'Chikou Span',
-            'kijun': 'Price vs Kijun'
+            'tk_cross': 'TK Relationship',
+            'cloud_color': 'Cloud Color',
+            'chikou': 'Chikou Position',
+            'kijun': 'Kijun Support'
         }
 
         for comp_key in ['kumo', 'tk_cross', 'cloud_color', 'chikou', 'kijun']:
@@ -1461,18 +1659,18 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
         content.append(comp_table)
         content.append(Spacer(1, 0.15*inch))
 
-        # Enhancement signals table
-        enh_data = [['Enhancement', 'Signal', 'Value', 'Changed?']]
+        # Additional factors table (enhancements, excluding kumo_twist which is in event_signals)
+        content.append(Paragraph("<b>ADDITIONAL FACTORS</b>", normal_style))
+        enh_data = [['Factor', 'State', 'Value', 'Changed?']]
         enhancement_names = {
-            'volume_confirm': 'Volume Confirmation',
-            'kumo_twist': 'Kumo Twist',
+            'volume_confirm': 'Volume',
             'cloud_thickness': 'Cloud Thickness',
-            'tk_location': 'TK Cross Location',
+            'tk_location': 'TK Location',
             'kijun_distance': 'Kijun Distance',
             'flat_lines': 'Flat Lines',
         }
-        for enh_key in ['volume_confirm', 'kumo_twist', 'cloud_thickness',
-                        'tk_location', 'kijun_distance', 'flat_lines']:
+        enh_order = ['volume_confirm', 'cloud_thickness', 'tk_location', 'kijun_distance', 'flat_lines']
+        for enh_key in enh_order:
             enh = analysis.get('enhancements', {}).get(enh_key, {})
             contrib = enh.get('contribution', 0)
             changed = ''
@@ -1497,9 +1695,8 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
             ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightgrey]),
         ]))
 
-        # Highlight changed enhancements
-        for i, enh_key in enumerate(['volume_confirm', 'kumo_twist', 'cloud_thickness',
-                                      'tk_location', 'kijun_distance', 'flat_lines'], 1):
+        # Highlight changed factors
+        for i, enh_key in enumerate(enh_order, 1):
             if enh_key in changes:
                 enh_table.setStyle(TableStyle([('BACKGROUND', (-1, i), (-1, i), colors.yellow)]))
 
@@ -1645,6 +1842,19 @@ def generate_html_dashboard(analyses, charts_folder, output_folder, filename="ic
                     'direction': str(ch.get('direction', ''))
                 }
 
+        # Serialize event signals
+        event_signals = {}
+        for key, sig in a.get('event_signals', {}).items():
+            event_signals[key] = {
+                'name': str(sig.get('name', key)),
+                'triggered': bool(sig.get('triggered', False)),
+                'type': str(sig.get('type', '')) if sig.get('type') else None,
+                'description': str(sig.get('description', ''))
+            }
+
+        # Count triggered signals
+        triggered_count = sum(1 for sig in event_signals.values() if sig.get('triggered'))
+
         stocks_json.append({
             'ticker': ticker,
             'name': a.get('name', ticker),
@@ -1664,7 +1874,10 @@ def generate_html_dashboard(analyses, charts_folder, output_folder, filename="ic
             'chart_file': chart_rel,
             'has_changes': len(changes) > 0,
             'recommendation_note': a.get('recommendation_note', ''),
-            'prev_total_score': float(a.get('prev_total_score', a.get('total_score', 0)))
+            'prev_total_score': float(a.get('prev_total_score', a.get('total_score', 0))),
+            'event_signals': event_signals,
+            'triggered_signals': triggered_count,
+            'has_signals': triggered_count > 0
         })
 
     stocks_data = json.dumps(stocks_json, indent=2)
@@ -1981,18 +2194,23 @@ body {{
   font-weight: 600;
   font-family: var(--font-mono);
 }}
-.confidence-bar {{
-  width: 100%;
-  height: 4px;
-  background: var(--bg-tertiary);
-  border-radius: 2px;
+/* Toned-down confidence display */
+.conf-row {{
+  opacity: 0.7;
   margin-top: 4px;
-  overflow: hidden;
 }}
-.confidence-fill {{
-  height: 100%;
-  border-radius: 2px;
-  transition: width .4s ease;
+.conf-row .card-label {{
+  font-size: 10px;
+}}
+.conf-value {{
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}}
+.conf-value small {{
+  font-weight: 400;
+  font-size: 10px;
+  color: var(--text-muted);
 }}
 .score-indicator {{
   display: inline-flex;
@@ -2009,6 +2227,68 @@ body {{
   background: var(--amber);
   box-shadow: 0 0 6px var(--amber);
 }}
+.signal-dot {{
+  position: absolute;
+  top: 12px;
+  right: 26px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green);
+  animation: pulse 1.5s infinite;
+}}
+@keyframes pulse {{
+  0%, 100% {{ opacity: 1; transform: scale(1); }}
+  50% {{ opacity: 0.7; transform: scale(1.2); }}
+}}
+
+/* Card signals section */
+.card-signals {{
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}}
+.card-signals-title {{
+  font-size: 10px;
+  color: var(--green);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}}
+.card-signal-list {{
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}}
+.card-signal-item {{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}}
+.card-signal-arrow {{
+  font-size: 10px;
+  width: 14px;
+  text-align: center;
+}}
+.card-signal-arrow.bullish {{ color: var(--green); }}
+.card-signal-arrow.bearish {{ color: var(--red); }}
+.card-signal-arrow.neutral {{ color: var(--blue); }}
+.card-signal-name {{
+  color: var(--text-secondary);
+  flex: 1;
+}}
+.card-signal-type {{
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
+}}
+.card-signal-type.bullish {{ background: var(--green-bg); color: var(--green); }}
+.card-signal-type.bearish {{ background: var(--red-bg); color: var(--red); }}
+.card-signal-type.neutral {{ background: var(--blue-bg); color: var(--blue); }}
 
 /* Card trend & strength indicators */
 .card-indicators {{
@@ -2069,10 +2349,13 @@ body {{
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  max-width: 1100px;
-  width: 100%;
+  max-width: 90vw;
+  width: 1400px;
   box-shadow: var(--shadow-lg);
   animation: modalIn .25s ease;
+  resize: horizontal;
+  overflow: auto;
+  min-width: 600px;
 }}
 @keyframes modalIn {{
   from {{ opacity: 0; transform: translateY(20px) scale(.98); }}
@@ -2210,9 +2493,35 @@ body {{
   font-weight: 600;
   font-family: var(--font-mono);
 }}
-.sig-bullish {{ background: var(--green-bg); color: var(--green); }}
-.sig-bearish {{ background: var(--red-bg); color: var(--red); }}
-.sig-neutral {{ background: var(--blue-bg); color: var(--blue); }}
+.sig-bullish, .signal-bullish {{ background: var(--green-bg); color: var(--green); }}
+.sig-bearish, .signal-bearish {{ background: var(--red-bg); color: var(--red); }}
+.sig-neutral, .signal-neutral {{ background: var(--blue-bg); color: var(--blue); }}
+
+/* Event Signals Banner */
+.event-signals-banner {{
+  background: linear-gradient(135deg, var(--green-bg), rgba(0,255,136,0.05));
+  border: 1px solid var(--green-dim);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 20px;
+}}
+.event-signals-banner .section-title {{
+  margin-bottom: 12px;
+  border-bottom: none;
+  padding-bottom: 0;
+}}
+.event-table {{
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+}}
+.event-table th {{
+  background: var(--bg-tertiary);
+}}
+.signal-desc {{
+  font-size: 12px;
+  color: var(--text-secondary);
+  max-width: 300px;
+}}
 .contrib-pos {{ color: var(--green); font-family: var(--font-mono); font-weight: 600; }}
 .contrib-neg {{ color: var(--red); font-family: var(--font-mono); font-weight: 600; }}
 .contrib-zero {{ color: var(--text-muted); font-family: var(--font-mono); }}
@@ -2462,6 +2771,39 @@ function formatPrice(price, currency) {{
   return '$' + price.toLocaleString('en-US', {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
 }}
 
+function renderCardSignals(s) {{
+  if (!s.has_signals || !s.event_signals) return '';
+
+  const signalNames = {{
+    'tk_cross': 'TK Cross',
+    'kumo_breakout': 'Kumo Breakout',
+    'chikou_breakout': 'Chikou Breakout',
+    'kumo_twist': 'Kumo Twist'
+  }};
+
+  let items = '';
+  for (const [key, sig] of Object.entries(s.event_signals)) {{
+    if (!sig.triggered) continue;
+    const sigType = sig.type || 'UNKNOWN';
+    const isUp = sigType.toUpperCase().includes('BULLISH');
+    const isDown = sigType.toUpperCase().includes('BEARISH');
+    const arrow = isUp ? '&#9650;' : (isDown ? '&#9660;' : '&#9679;');
+    const cls = isUp ? 'bullish' : (isDown ? 'bearish' : 'neutral');
+    const name = signalNames[key] || sig.name || key;
+    items += `<div class="card-signal-item">
+      <span class="card-signal-arrow ${{cls}}">${{arrow}}</span>
+      <span class="card-signal-name">${{name}}</span>
+      <span class="card-signal-type ${{cls}}">${{sigType}}</span>
+    </div>`;
+  }}
+
+  if (!items) return '';
+  return `<div class="card-signals">
+    <div class="card-signals-title">&#128276; Signals</div>
+    <div class="card-signal-list">${{items}}</div>
+  </div>`;
+}}
+
 function getFiltered() {{
   let list = STOCKS;
   if (currentFilter !== 'ALL') list = list.filter(s => s.recommendation === currentFilter);
@@ -2492,7 +2834,8 @@ function renderGrid() {{
 
   grid.innerHTML = filtered.map(s => `
     <div class="card rec-${{recClass(s.recommendation)}}" onclick="openModal('${{s.ticker}}')">
-      ${{s.has_changes ? '<div class="change-dot" title="Signals changed from previous day"></div>' : ''}}
+      ${{s.has_signals ? '<div class="signal-dot" title="Event signal triggered today!"></div>' : ''}}
+      ${{s.has_changes ? '<div class="change-dot" title="Conditions changed from previous day"></div>' : ''}}
       <div class="card-header">
         <div>
           <div class="card-ticker">${{s.ticker}}</div>
@@ -2513,14 +2856,12 @@ function renderGrid() {{
           <span class="card-label">Score</span>
           <span class="card-value" style="color:${{s.total_score >= 0 ? 'var(--green)' : 'var(--red)'}}">${{s.total_score >= 0 ? '+' : ''}}${{s.total_score.toFixed(1)}}${{scoreDeltaHtml(s)}}</span>
         </div>
-        <div>
-          <div class="card-row">
-            <span class="card-label">Confidence</span>
-            <span class="card-value" style="color:${{confidenceColor(s.confidence_score)}}">${{s.confidence_score}}% <small style="font-weight:400;font-size:11px">${{s.confidence_label}}</small></span>
-          </div>
-          <div class="confidence-bar"><div class="confidence-fill" style="width:${{s.confidence_score}}%;background:${{confidenceColor(s.confidence_score)}}"></div></div>
+        <div class="card-row conf-row">
+          <span class="card-label">Confidence</span>
+          <span class="card-value conf-value">${{s.confidence_score}}% <small>${{s.confidence_label}}</small></span>
         </div>
       </div>
+      ${{renderCardSignals(s)}}
     </div>
   `).join('');
 }}
@@ -2544,13 +2885,42 @@ function openModal(ticker) {{
     'volume_confirm': 'Volume Confirmation: Compares current volume to 20-day average. 1.5x+ confirms trend direction (\\u00b11), 0.5x or less = weak conviction (-0.5).',
     'kumo_twist': 'Kumo Twist: Detects when Senkou Span A and B cross each other, signaling a potential major trend reversal. Bullish twist = +1, bearish = -1.',
     'cloud_thickness': 'Cloud Thickness: Measures cloud width as % of price. Thin (<1%) = weak support/resistance, thick (>4%) = strong. Scores \\u00b11.',
-    'tk_location': 'TK Cross Location: Where the Tenkan/Kijun cross occurs relative to the cloud. Above cloud = strong (+1), inside = moderate (0), below = weak.',
+    'tk_location': 'TK Cross Location: Where the Tenkan/Kijun cross occurs relative to the cloud. Above = strong (\\u00b11), inside = moderate (\\u00b10.75), below = weak (\\u00b10.5).',
     'kijun_distance': 'Kijun Distance: How far price has extended from Kijun-sen. >8% = overextended risk (-1), >5% = mild caution (-0.5).',
     'flat_lines': 'Flat Kijun/Tenkan Lines: Detects consolidation periods when both lines are flat. Both flat = consolidation warning (-0.5).'
   }};
 
-  // Build component rows
-  const compNames = {{'kumo': 'Kumo (Cloud)', 'tk_cross': 'TK Cross', 'cloud_color': 'Cloud Color', 'chikou': 'Chikou Span', 'kijun': 'Kijun Support'}};
+  // Build event signals section (only show if triggered)
+  let eventSignalsHtml = '';
+  if (s.has_signals && s.event_signals) {{
+    let sigRows = '';
+    for (const [key, sig] of Object.entries(s.event_signals)) {{
+      if (!sig.triggered) continue;
+      const sigType = sig.type || 'UNKNOWN';
+      const isUp = sigType.toUpperCase().includes('BULLISH');
+      const isDown = sigType.toUpperCase().includes('BEARISH');
+      const arrow = isUp ? '&#9650;' : (isDown ? '&#9660;' : '&#9679;');
+      const cls = isUp ? 'signal-bullish' : (isDown ? 'signal-bearish' : 'signal-neutral');
+      sigRows += `<tr>
+        <td class="signal-name">${{sig.name}}</td>
+        <td><span class="signal-badge ${{cls}}">${{arrow}} ${{sigType}}</span></td>
+        <td class="signal-desc">${{sig.description}}</td>
+      </tr>`;
+    }}
+    if (sigRows) {{
+      eventSignalsHtml = `
+        <div class="event-signals-banner">
+          <div class="section-title" style="color:var(--green)">&#128276; EVENT SIGNALS TRIGGERED</div>
+          <table class="signal-table event-table">
+            <tr><th>Signal</th><th>Type</th><th>Description</th></tr>
+            ${{sigRows}}
+          </table>
+        </div>`;
+    }}
+  }}
+
+  // Build condition rows (formerly components)
+  const compNames = {{'kumo': 'Kumo Position', 'tk_cross': 'TK Relationship', 'cloud_color': 'Cloud Color', 'chikou': 'Chikou Position', 'kijun': 'Kijun Support'}};
   let compRows = '';
   for (const [key, label] of Object.entries(compNames)) {{
     const c = s.components[key];
@@ -2564,8 +2934,8 @@ function openModal(ticker) {{
     </tr>`;
   }}
 
-  // Build enhancement rows
-  const enhNames = {{'volume_confirm': 'Volume', 'kumo_twist': 'Kumo Twist', 'cloud_thickness': 'Cloud Thickness', 'tk_location': 'TK Location', 'kijun_distance': 'Kijun Distance', 'flat_lines': 'Flat Lines'}};
+  // Build additional factors rows (enhancements minus kumo_twist which is now in event_signals)
+  const enhNames = {{'volume_confirm': 'Volume', 'cloud_thickness': 'Cloud Thickness', 'tk_location': 'TK Location', 'kijun_distance': 'Kijun Distance', 'flat_lines': 'Flat Lines'}};
   let enhRows = '';
   for (const [key, label] of Object.entries(enhNames)) {{
     const e = s.enhancements[key];
@@ -2649,18 +3019,20 @@ function openModal(ticker) {{
     <div class="section-title">Trade Targets</div>
     ${{targetsHtml}}
 
+    ${{eventSignalsHtml}}
+
     <div class="signals-grid">
       <div>
-        <div class="section-title">Core Components</div>
+        <div class="section-title">Conditions</div>
         <table class="signal-table">
-          <tr><th>Component</th><th>Signal</th><th>Score</th></tr>
+          <tr><th>Condition</th><th>State</th><th>Score</th></tr>
           ${{compRows}}
         </table>
       </div>
       <div>
-        <div class="section-title">Enhancement Signals</div>
+        <div class="section-title">Additional Factors</div>
         <table class="signal-table">
-          <tr><th>Signal</th><th>Status</th><th>Score</th></tr>
+          <tr><th>Factor</th><th>State</th><th>Score</th></tr>
           ${{enhRows}}
         </table>
       </div>
@@ -2898,9 +3270,9 @@ def process_stock(stock_info, period, interval, save_csv, save_chart, charts_fol
         print("FAILED")
         return None
 
-def archive_previous_output(base_output_folder, archive_folder):
+def archive_previous_output(base_output_folder, archive_folder, runs_to_keep=2):
     """
-    Move previous output files to archive folder with timestamp
+    Move previous output files to archive folder with timestamp and clean up old runs.
 
     Parameters:
     -----------
@@ -2908,6 +3280,8 @@ def archive_previous_output(base_output_folder, archive_folder):
         The main output folder to archive
     archive_folder : str
         The archive folder to move files to
+    runs_to_keep : int
+        Number of archive runs to keep (default: 2). Older runs are deleted.
     """
     if not os.path.exists(base_output_folder):
         print("No previous output to archive.")
@@ -2936,21 +3310,31 @@ def archive_previous_output(base_output_folder, archive_folder):
         dest_path = os.path.join(archive_destination, item)
         shutil.move(source_path, dest_path)
 
+    # Clean up old archive runs (keep only the most recent N runs)
+    if runs_to_keep > 0:
+        try:
+            # Get all run_* folders sorted by name (timestamp order)
+            run_folders = sorted([
+                d for d in os.listdir(archive_folder)
+                if d.startswith('run_') and os.path.isdir(os.path.join(archive_folder, d))
+            ])
+
+            # Delete older runs if we have more than runs_to_keep
+            runs_to_delete = len(run_folders) - runs_to_keep
+            if runs_to_delete > 0:
+                print(f"Cleaning up {runs_to_delete} old archive run(s)...")
+                for old_run in run_folders[:runs_to_delete]:
+                    old_run_path = os.path.join(archive_folder, old_run)
+                    shutil.rmtree(old_run_path)
+                    print(f"  Deleted: {old_run}")
+        except Exception as e:
+            print(f"Warning: Could not clean up old archives: {e}")
+
 
 def main():
     """Main function to run the script"""
 
-    # Define folders
-    base_output_folder = "Output"
-    archive_folder = "Archive"
-
-    # Archive previous output before starting new run
-    archive_previous_output(base_output_folder, archive_folder)
-
-    # Create base Output folder
-    os.makedirs(base_output_folder, exist_ok=True)
-
-    # Load configuration
+    # Load configuration first (needed for archive settings)
     config = load_stocks_config()
 
     if config is None:
@@ -2963,6 +3347,17 @@ def main():
     interval = settings.get('interval', '1d')
     save_csv = settings.get('save_csv', True)
     save_chart = settings.get('save_chart', True)
+    archive_runs_to_keep = settings.get('archive_runs_to_keep', 2)
+
+    # Define folders
+    base_output_folder = "Output"
+    archive_folder = "Archive"
+
+    # Archive previous output before starting new run
+    archive_previous_output(base_output_folder, archive_folder, archive_runs_to_keep)
+
+    # Create base Output folder
+    os.makedirs(base_output_folder, exist_ok=True)
 
     # Get markets from config
     markets = config.get('markets', {})

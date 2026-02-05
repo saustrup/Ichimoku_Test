@@ -641,7 +641,8 @@
   "settings": {
     "period": "1y",
     "interval": "1d",
-    "save_csv": true,
-    "save_chart": true
+    "save_csv": false,
+    "save_chart": true,
+    "archive_runs_to_keep": 2
   }
 }

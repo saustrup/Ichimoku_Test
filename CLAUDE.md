@@ -49,29 +49,39 @@ Individual stock processing is wrapped in try/except so a single ticker failure 
 | `archive_previous_output()` | Moves `Output/` to `Archive/run_<timestamp>/` |
 | `main()` | Entry point: archive → load config → process markets → generate reports |
 
-### Signal Scoring System
+### Analysis Architecture
 
-**Two-tier architecture**: a core scoring layer (5 components) and an enhancement layer (6 signals).
+**Two-layer system**: CONDITIONS (static states) and SIGNALS (triggered events).
 
-#### Core Components (composite score -8 to +7)
-- **Kumo** (price vs cloud): ±2 pts
-- **TK Cross** (Tenkan vs Kijun): ±1 pt
+#### CONDITIONS (Static States - Always Shown)
+Describe current position/measurements. Contribute to composite score (-8 to +7).
+
+**Core Conditions:**
+- **Kumo Position** (price vs cloud): ±2 pts
+- **TK Relationship** (Tenkan vs Kijun): ±1 pt
 - **Cloud Color** (Senkou A vs B): ±1 pt
-- **Chikou Span** (lagging): ±2/±1/±0.5 pts
+- **Chikou Position** (lagging): ±2/±1/±0.5 pts
 - **Kijun Support**: ±1 pt
+
+**Additional Factors:**
+- **Volume Level**: ≥1.5x 20-day avg confirms trend (±1), ≤0.5x = weak conviction (-0.5)
+- **Cloud Thickness**: thin <1% = weak S/R, thick >4% = strong S/R (±1)
+- **TK Location**: above cloud = strong (±1), inside = moderate (±0.75), below = weak (±0.5)
+- **Kijun Distance**: overextension >8% = risk (-1), >5% = mild (-0.5)
+- **Consolidation**: both Kijun+Tenkan flat = consolidation (-0.5)
 
 Core score maps to: BUY (strong), BUY MODERATE, WAIT, or AVOID via trend + strength heuristic.
 
-#### Enhancement Signals (separate layer, does not change core score)
-- **Volume Confirmation**: ≥1.5x 20-day avg confirms trend (±1), ≤0.5x = weak conviction (-0.5)
-- **Kumo Twist**: Senkou A/B crossover signals major trend change (±1)
-- **Cloud Thickness**: thin <1% = weak S/R, thick >4% = strong S/R (±1)
-- **TK Cross Location**: bullish cross above cloud = strong (+1), inside cloud = weak (0)
-- **Kijun Distance**: overextension >8% = risk (-1), >5% = mild (-0.5)
-- **Flat Lines**: both Kijun+Tenkan flat = consolidation (-0.5)
+#### SIGNALS (Events - Only Shown When Triggered)
+Detect day-over-day changes/crossovers. Only appear in reports when actually triggered.
+
+- **TK Cross**: Tenkan crosses Kijun (bullish/bearish crossover event)
+- **Kumo Breakout**: Price crosses cloud boundary (enters/exits cloud)
+- **Chikou Breakout**: Chikou crosses price or cloud from 26 periods ago
+- **Kumo Twist**: Senkou A/B crossover (future cloud color change)
 
 #### Confidence Score
-Percentage of all 11 signals (5 core + 6 enhancements) agreeing on direction. Labels: HIGH (≥80%), MODERATE (50-79%), LOW (<50%). High confidence can upgrade BUY MODERATE → BUY; low confidence can downgrade BUY → BUY MODERATE.
+Percentage of all conditions agreeing on direction. Labels: HIGH (≥80%), MODERATE (50-79%), LOW (<50%). High confidence can upgrade BUY MODERATE → BUY; low confidence can downgrade BUY → BUY MODERATE.
 
 #### Trade Targets
 - **Stop-loss primary**: Kijun-sen (if price above), else cloud bottom
@@ -79,7 +89,7 @@ Percentage of all 11 signals (5 core + 6 enhancements) agreeing on direction. La
 - **Take-profit 2**: 1:2 risk/reward from stop-loss distance
 - **Overextension warning**: flagged when price >8% from Kijun
 
-Day-over-day signal change tracking compares all 11 signals against the previous trading day, recording change direction (up/down arrows), previous values, and marking shifted components with asterisks. Changed stocks get yellow highlighting in the PDF.
+Day-over-day condition change tracking compares all conditions against the previous trading day, recording change direction (up/down arrows), previous values, and marking shifted conditions with asterisks. Stocks with triggered signals get highlighted indicators in the dashboard.
 
 ### Key Configuration: `stocks_config.json`
 
@@ -97,6 +107,7 @@ Defines markets and global settings. Currently configured: **Copenhagen** (40 st
   },
   "settings": {
     "period": "1y",
+    "archive_runs_to_keep": 2,
     "interval": "1d",
     "save_csv": true,
     "save_chart": true
