@@ -241,13 +241,13 @@ def plot_ichimoku(df, ticker, stock_name, filename=None, output_folder=None, ana
             ax.plot([mdates.date2num(date) - width/2, mdates.date2num(date) + width/2],
                    [close_price, close_price], color=color, linewidth=1, zorder=2)
 
-    # Plot Tenkan-sen (Conversion Line) - dark red
+    # Plot Tenkan-sen (Conversion Line) - blue
     ax.plot(df.index, df['tenkan_sen'], label='Tenkan-sen (Conversion)',
-            color='darkred', linewidth=1, alpha=0.8, zorder=3)
-
-    # Plot Kijun-sen (Base Line) - blue
-    ax.plot(df.index, df['kijun_sen'], label='Kijun-sen (Base)',
             color='blue', linewidth=1, alpha=0.8, zorder=3)
+
+    # Plot Kijun-sen (Base Line) - darkred
+    ax.plot(df.index, df['kijun_sen'], label='Kijun-sen (Base)',
+            color='darkred', linewidth=1, alpha=0.8, zorder=3)
 
     # Plot Chikou Span (Lagging Span) - dark green
     ax.plot(df.index, df['chikou_span'], label='Chikou Span (Lagging)',
@@ -320,7 +320,7 @@ def plot_ichimoku(df, ticker, stock_name, filename=None, output_folder=None, ana
     # Formatting
     ax.set_title(f'{stock_name} ({ticker}) - Ichimoku Cloud Chart', fontsize=16, fontweight='bold')
     ax.set_xlabel('Date', fontsize=12)
-    ax.set_ylabel('Price (USD)', fontsize=12)
+    ax.set_ylabel('Price', fontsize=12)
     ax.legend(loc='best', fontsize=10)
     ax.grid(True, alpha=0.3, linestyle='--')
 
@@ -1224,7 +1224,7 @@ def get_recommendation_priority(recommendation):
     }
     return priority_map.get(recommendation, 999)  # Unknown recommendations go last
 
-def generate_report(analyses, filename="ichimoku_trading_report.txt", output_folder=None, market_name=None, currency="USD"):
+def generate_report(analyses, filename="ichimoku_trading_report.txt", output_folder=None, market_name=None, currency="USD", failed_stocks=None):
     """
     Generate a trading report based on Ichimoku analysis
 
@@ -1480,6 +1480,16 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
             report_lines.append(f"  *** WARNING: Price overextended ({targets['kijun_distance_pct']:+.1f}% from Kijun) ***")
         report_lines.append("")
         report_lines.append("-" * 80)
+
+    # Failed stocks section
+    if failed_stocks:
+        report_lines.append("")
+        report_lines.append("="*80)
+        report_lines.append(f"FAILED STOCKS ({len(failed_stocks)} could not be analyzed):")
+        report_lines.append("-" * 80)
+        for fs in failed_stocks:
+            report_lines.append(f"  {fs['ticker']:<12} {fs['name']:<30} {fs['reason']}")
+        report_lines.append("="*80)
 
     report_lines.append("")
     report_lines.append("="*80)
@@ -1897,7 +1907,7 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
     return pdf_path
 
 
-def generate_html_dashboard(analyses, charts_folder, output_folder, filename="ichimoku_dashboard.html", market_name=None, currency="USD"):
+def generate_html_dashboard(analyses, charts_folder, output_folder, filename="ichimoku_dashboard.html", market_name=None, currency="USD", failed_stocks=None):
     """
     Generate a self-contained HTML dashboard with grid view and interactive chart modal.
 
@@ -2023,6 +2033,24 @@ def generate_html_dashboard(analyses, charts_folder, output_folder, filename="ic
     moderate_count = rec_counts.get('BUY (MODERATE)', 0)
     wait_count = rec_counts.get('WAIT', 0)
     avoid_count = rec_counts.get('AVOID', 0)
+    failed_count = len(failed_stocks) if failed_stocks else 0
+
+    # Build failed stocks HTML section
+    if failed_stocks:
+        failed_items = ''
+        for fs in failed_stocks:
+            failed_items += f'<div class="failed-item"><span class="failed-ticker">{fs["ticker"]}</span><span class="failed-name">{fs["name"]}</span><span class="failed-reason">{fs["reason"]}</span></div>\n'
+        failed_section_html = f"""
+<div class="failed-section">
+  <button class="failed-toggle" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">
+    <span class="arrow">&#9654;</span> {failed_count} stock(s) failed to download
+  </button>
+  <div class="failed-list">
+    {failed_items}
+  </div>
+</div>"""
+    else:
+        failed_section_html = ''
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -2164,6 +2192,52 @@ body {{
 .stat-wait .dot {{ background: var(--yellow); }}
 .stat-avoid {{ background: var(--red-bg); color: var(--red); border-color: var(--red); }}
 .stat-avoid .dot {{ background: var(--red); }}
+.stat-failed {{ background: rgba(128,128,128,0.15); color: #999; border-color: #666; }}
+.stat-failed .dot {{ background: #999; }}
+
+/* Failed stocks section */
+.failed-section {{
+  max-width: 900px;
+  margin: 16px auto;
+  padding: 0 20px;
+}}
+.failed-toggle {{
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 16px;
+  color: #999;
+  font-size: 13px;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}}
+.failed-toggle:hover {{ border-color: #666; }}
+.failed-toggle .arrow {{ transition: transform 0.2s; }}
+.failed-toggle.open .arrow {{ transform: rotate(90deg); }}
+.failed-list {{
+  display: none;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  padding: 8px 0;
+}}
+.failed-list.open {{ display: block; }}
+.failed-item {{
+  display: flex;
+  padding: 6px 16px;
+  font-size: 13px;
+  color: #999;
+  gap: 12px;
+}}
+.failed-item:not(:last-child) {{ border-bottom: 1px solid var(--border); }}
+.failed-ticker {{ font-weight: 600; min-width: 90px; }}
+.failed-name {{ flex: 1; }}
+.failed-reason {{ color: #777; font-style: italic; }}
 
 /* Theme toggle */
 .theme-toggle {{
@@ -2778,6 +2852,15 @@ body {{
 .target-box.tp1 {{ border-left-color: var(--green); }}
 .target-box.tp2 {{ border-left-color: var(--green-dim); }}
 .target-box.info {{ border-left-color: var(--blue); }}
+.target-box.has-tooltip {{
+  cursor: help;
+  border-bottom: none;
+}}
+.target-box.has-tooltip:hover::after {{
+  left: 0;
+  top: 100%;
+  width: 320px;
+}}
 .target-label {{
   font-size: 11px;
   color: var(--text-muted);
@@ -2872,6 +2955,7 @@ body {{
     <div class="stat-pill stat-moderate"><span class="dot"></span> {moderate_count} MODERATE</div>
     <div class="stat-pill stat-wait"><span class="dot"></span> {wait_count} WAIT</div>
     <div class="stat-pill stat-avoid"><span class="dot"></span> {avoid_count} AVOID</div>
+    {'<div class="stat-pill stat-failed"><span class="dot"></span> ' + str(failed_count) + ' FAILED</div>' if failed_count else ''}
     <button class="theme-toggle" id="themeToggle" title="Toggle light/dark mode" aria-label="Toggle theme">&#9790;</button>
   </div>
 </div>
@@ -2898,6 +2982,8 @@ body {{
   <div class="grid" id="stockGrid"></div>
   <div class="no-results" id="noResults" style="display:none;">No stocks match the current filter.</div>
 </div>
+
+{failed_section_html}
 
 <div class="modal-backdrop" id="modalBackdrop">
   <div class="modal" id="modal">
@@ -3152,21 +3238,30 @@ function openModal(ticker) {{
 
   // Build trade targets
   const t = s.trade_targets;
+  const price = s.close_price;
+  const risk = price - t.stop_loss_primary;
+  const slSource = (t.stop_loss_kijun && t.stop_loss_primary === t.stop_loss_kijun)
+    ? 'Kijun-sen (price is above Kijun)'
+    : 'Cloud bottom (price is below Kijun)';
+  const slTip = `Primary stop-loss is set at the ${{slSource}}. Kijun SL: ${{t.stop_loss_kijun ? t.stop_loss_kijun.toFixed(2) : 'N/A'}}, Cloud SL: ${{t.stop_loss_cloud ? t.stop_loss_cloud.toFixed(2) : 'N/A'}}.`;
+  const tp1Tip = `1:1 risk/reward target. Risk = Price (${{price.toFixed(2)}}) - SL (${{t.stop_loss_primary.toFixed(2)}}) = ${{risk.toFixed(2)}}. TP1 = Price + Risk = ${{(price + risk).toFixed(2)}}.`;
+  const tp2Tip = `1:2 risk/reward target. Risk = ${{risk.toFixed(2)}}. TP2 = Price (${{price.toFixed(2)}}) + 2 x Risk = ${{(price + risk * 2).toFixed(2)}}.`;
+  const kijTip = `Percentage distance between current price and Kijun-sen. Values above 8% indicate overextension risk, above 5% is elevated. Current: ${{t.kijun_distance_pct.toFixed(1)}}%.`;
   const targetsHtml = `
     <div class="targets-grid">
-      <div class="target-box sl">
+      <div class="target-box sl has-tooltip" data-tooltip="${{slTip}}">
         <div class="target-label">Stop Loss</div>
         <div class="target-value" style="color:var(--red)">${{formatPrice(t.stop_loss_primary, s.currency)}}</div>
       </div>
-      <div class="target-box tp1">
+      <div class="target-box tp1 has-tooltip" data-tooltip="${{tp1Tip}}">
         <div class="target-label">Take Profit 1 (1:1)</div>
         <div class="target-value" style="color:var(--green)">${{formatPrice(t.take_profit_1, s.currency)}}</div>
       </div>
-      <div class="target-box tp2">
+      <div class="target-box tp2 has-tooltip" data-tooltip="${{tp2Tip}}">
         <div class="target-label">Take Profit 2 (1:2)</div>
         <div class="target-value" style="color:var(--green-dim)">${{formatPrice(t.take_profit_2, s.currency)}}</div>
       </div>
-      <div class="target-box info">
+      <div class="target-box info has-tooltip" data-tooltip="${{kijTip}}">
         <div class="target-label">Kijun Distance</div>
         <div class="target-value" style="color:${{Math.abs(t.kijun_distance_pct) > 5 ? 'var(--amber)' : 'var(--text-primary)'}}">${{t.kijun_distance_pct.toFixed(1)}}%${{t.overextended ? ' ⚠' : ''}}</div>
       </div>
@@ -3450,17 +3545,22 @@ def generate_index_page(market_summaries, output_folder):
     scan_date = datetime.now().strftime('%Y-%m-%d')
     total_stocks = sum(m['total'] for m in market_summaries)
 
+    total_failed = sum(m.get('failed', 0) for m in market_summaries)
+
     cards_html = ''
     for m in market_summaries:
+        failed = m.get('failed', 0)
+        failed_pill = f'<span class="mp mp-failed">{failed} FAILED</span>' if failed else ''
         cards_html += f"""
         <a href="{m['market_key']}/{m['dashboard_file']}" class="market-card">
           <h2>{m['market_name']}</h2>
-          <div class="market-count">{m['total']} stocks</div>
+          <div class="market-count">{m['total']} stocks{f' ({failed} failed)' if failed else ''}</div>
           <div class="market-pills">
             <span class="mp mp-buy">{m['buy']} BUY</span>
             <span class="mp mp-mod">{m['moderate']} MOD</span>
             <span class="mp mp-wait">{m['wait']} WAIT</span>
             <span class="mp mp-avoid">{m['avoid']} AVOID</span>
+            {failed_pill}
           </div>
         </a>"""
 
@@ -3501,6 +3601,7 @@ h1 span {{ color:var(--blue); }}
 .mp-mod {{ background:#ffaa0018; color:var(--amber); }}
 .mp-wait {{ background:#f0e04018; color:var(--yellow); }}
 .mp-avoid {{ background:#ff475718; color:var(--red); }}
+.mp-failed {{ background:rgba(128,128,128,0.1); color:#999; }}
 .footer {{ margin-top:60px; color:var(--text3); font-size:12px; }}
 .theme-toggle {{
   position:fixed; top:20px; right:20px;
@@ -3602,8 +3703,8 @@ def process_stock(stock_info, period, interval, save_csv, save_chart, charts_fol
         print(f"OK ({analysis['recommendation']}, {analysis['confidence_score']}% conf)")
         return analysis
     else:
-        print("FAILED")
-        return None
+        print("FAILED (no data)")
+        return {'error': True, 'ticker': ticker, 'name': name, 'reason': 'No data retrieved from Yahoo Finance'}
 
 def archive_previous_output(base_output_folder, archive_folder, runs_to_keep=2):
     """
@@ -3742,25 +3843,35 @@ def main():
 
         # Process each stock in this market and collect analyses
         analyses = []
+        failed_stocks = []
         num_stocks = len(stocks)
         for i, stock_info in enumerate(stocks, start=1):
             try:
-                analysis = process_stock(stock_info, period, interval, save_csv, save_chart,
+                result = process_stock(stock_info, period, interval, save_csv, save_chart,
                                          charts_folder=charts_folder, data_folder=data_folder,
                                          cache_folder=cache_folder,
                                          stock_index=i, stock_total=num_stocks)
-                if analysis is not None:
-                    analyses.append(analysis)
+                if result is None:
+                    failed_stocks.append({'ticker': stock_info['ticker'], 'name': stock_info['name'], 'reason': 'Unknown error'})
+                elif result.get('error'):
+                    failed_stocks.append(result)
+                else:
+                    analyses.append(result)
             except Exception as e:
                 print(f"  [{i}/{num_stocks}] {stock_info['ticker']}... ERROR: {str(e)}")
+                failed_stocks.append({'ticker': stock_info['ticker'], 'name': stock_info['name'], 'reason': str(e)})
                 continue
 
         # Sort analyses by recommendation (descending priority: BUY first, then AVOID last)
         analyses.sort(key=lambda x: get_recommendation_priority(x['recommendation']))
 
         succeeded = len(analyses)
-        failed = num_stocks - succeeded
+        failed = len(failed_stocks)
         print(f"  Done: {succeeded} succeeded, {failed} failed")
+        if failed_stocks:
+            print(f"  Failed stocks:")
+            for fs in failed_stocks:
+                print(f"    - {fs['name']} ({fs['ticker']}): {fs['reason']}")
 
         # Generate trading report for this market
         if analyses:
@@ -3769,13 +3880,14 @@ def main():
             pdf_filename = f"ichimoku_report_{market_key}.pdf"
             dashboard_filename = f"ichimoku_dashboard_{market_key}.html"
             generate_report(analyses, filename=report_filename, output_folder=market_output_folder,
-                          market_name=market_name, currency=currency)
+                          market_name=market_name, currency=currency, failed_stocks=failed_stocks)
             # Generate PDF report with charts
             generate_pdf_report(analyses, charts_folder, market_output_folder,
                               filename=pdf_filename, market_name=market_name, currency=currency)
             # Generate HTML dashboard
             generate_html_dashboard(analyses, charts_folder, market_output_folder,
-                                   filename=dashboard_filename, market_name=market_name, currency=currency)
+                                   filename=dashboard_filename, market_name=market_name, currency=currency,
+                                   failed_stocks=failed_stocks)
             print("OK")
 
             # Collect summary for index page
@@ -3787,6 +3899,7 @@ def main():
                 'market_key': market_key,
                 'market_name': market_name,
                 'total': len(analyses),
+                'failed': len(failed_stocks),
                 'buy': rec_counts.get('BUY', 0),
                 'moderate': rec_counts.get('BUY (MODERATE)', 0),
                 'wait': rec_counts.get('WAIT', 0),
