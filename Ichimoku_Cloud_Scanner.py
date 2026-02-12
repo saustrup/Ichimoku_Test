@@ -5,10 +5,12 @@ Script to download stock prices and create Ichimoku Cloud charts
 
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.patches import Rectangle
 from datetime import datetime, timedelta
+import argparse
 import json
 import os
 import shutil
@@ -22,9 +24,14 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Tabl
 from reportlab.platypus.flowables import AnchorFlowable
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 
-def download_stock(ticker, stock_name, period="1y", interval="1d", save_to_csv=True, output_folder=None):
+PERIOD_TO_DAYS = {
+    "1d": 1, "5d": 5, "1mo": 30, "3mo": 90, "6mo": 180,
+    "1y": 365, "2y": 730, "5y": 1825, "10y": 3650, "ytd": None, "max": None
+}
+
+def download_stock(ticker, stock_name, period="1y", interval="1d", save_to_csv=True, output_folder=None, cache_folder=None):
     """
-    Download stock prices for a given ticker
+    Download stock prices for a given ticker, using cached data when available.
 
     Parameters:
     -----------
@@ -37,33 +44,77 @@ def download_stock(ticker, stock_name, period="1y", interval="1d", save_to_csv=T
     interval : str
         Valid intervals: 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo
     save_to_csv : bool
-        If True, saves the data to a CSV file
+        If True, saves the data to a CSV file in output_folder
     output_folder : str
-        Folder to save output files (default: current directory)
+        Folder to save run-specific CSV files (default: current directory)
+    cache_folder : str
+        Folder for persistent price data cache. If provided, enables incremental downloads.
 
     Returns:
     --------
     pandas.DataFrame : Stock price data
     """
 
-    # Create ticker object
     stock = yf.Ticker(ticker)
+    cache_file = os.path.join(cache_folder, f"{ticker.lower()}_prices.csv") if cache_folder else None
+    cached_df = None
 
-    # Download historical data
-    df = stock.history(period=period, interval=interval)
+    # Try to load cached data and do incremental download
+    if cache_file and os.path.exists(cache_file):
+        try:
+            cached_df = pd.read_csv(cache_file, index_col=0, parse_dates=True)
+            cached_df.index = cached_df.index.tz_localize(None)
+            latest_date = cached_df.index.max()
+
+            # Re-download from the latest cached date (not day after) so that
+            # the last day's data is always refreshed with final closing prices
+            # in case the previous run happened while the market was still open.
+            new_df = stock.history(start=latest_date.strftime('%Y-%m-%d'), interval=interval)
+            if not new_df.empty:
+                new_df.index = new_df.index.tz_localize(None)
+                df = pd.concat([cached_df, new_df])
+                df = df[~df.index.duplicated(keep='last')]
+                df.sort_index(inplace=True)
+            else:
+                df = cached_df
+        except Exception:
+            # Cache corrupt or unreadable — fall back to full download
+            cached_df = None
+
+    # Full download if no cache was used
+    if cached_df is None:
+        df = stock.history(period=period, interval=interval)
+        if not df.empty:
+            df.index = df.index.tz_localize(None)
 
     if df.empty:
         print(f"    No data retrieved for {ticker}. Skipping.")
         return None
 
-    # Save to CSV if requested
+    # Save/update persistent cache
+    if cache_file:
+        df.to_csv(cache_file)
+
+    # Trim to requested period for analysis/charting
+    period_days = PERIOD_TO_DAYS.get(period)
+    if period_days:
+        cutoff = datetime.now() - timedelta(days=period_days)
+        trimmed_df = df[df.index >= cutoff]
+        if not trimmed_df.empty:
+            df_out = trimmed_df
+        else:
+            df_out = df
+    else:
+        df_out = df
+
+    # Save run-specific CSV snapshot if requested
     if save_to_csv:
         filename = f"{ticker.lower()}_stock_{period}_{datetime.now().strftime('%Y%m%d')}.csv"
         if output_folder:
             filename = os.path.join(output_folder, filename)
-        df.to_csv(filename)
+        df_out.to_csv(filename)
 
-    return df
+    return df_out
 
 def calculate_ichimoku(df):
     """
@@ -198,19 +249,19 @@ def plot_ichimoku(df, ticker, stock_name, filename=None, output_folder=None, ana
     ax.plot(df.index, df['kijun_sen'], label='Kijun-sen (Base)',
             color='blue', linewidth=1, alpha=0.8, zorder=3)
 
-    # Plot Chikou Span (Lagging Span) - light green
+    # Plot Chikou Span (Lagging Span) - dark green
     ax.plot(df.index, df['chikou_span'], label='Chikou Span (Lagging)',
-            color='lightgreen', linewidth=1, alpha=0.8, zorder=3)
+            color='#228B22', linewidth=1.2, alpha=0.9, zorder=3)
 
-    # Plot Senkou Span A - orange
+    # Plot Senkou Span A - orange (historical)
     ax.plot(df.index, df['senkou_span_a'], label='Senkou Span A',
             color='orange', linewidth=1, alpha=0.5, zorder=3)
 
-    # Plot Senkou Span B - purple
+    # Plot Senkou Span B - purple (historical)
     ax.plot(df.index, df['senkou_span_b'], label='Senkou Span B',
             color='purple', linewidth=1, alpha=0.5, zorder=3)
 
-    # Fill the cloud (Kumo) - behind candlesticks
+    # Fill the cloud (Kumo) - behind candlesticks (historical)
     ax.fill_between(df.index, df['senkou_span_a'], df['senkou_span_b'],
                      where=df['senkou_span_a'] >= df['senkou_span_b'],
                      facecolor='palegreen', alpha=0.25, interpolate=True,
@@ -220,6 +271,51 @@ def plot_ichimoku(df, ticker, stock_name, filename=None, output_folder=None, ana
                      where=df['senkou_span_a'] < df['senkou_span_b'],
                      facecolor='lightcoral', alpha=0.25, interpolate=True,
                      label='Bearish Cloud', zorder=0)
+
+    # --- Future cloud projection (26 periods beyond last candle) ---
+    chart_right_edge = df.index[-1]
+    if len(df) >= 26 and 'future_senkou_a' in df.columns and 'future_senkou_b' in df.columns:
+        last_date = df.index[-1]
+        future_dates = pd.bdate_range(start=last_date + pd.Timedelta(days=1), periods=26)
+        future_a = df['future_senkou_a'].iloc[-26:].values
+        future_b = df['future_senkou_b'].iloc[-26:].values
+
+        # Bridge: connect last historical cloud point to first future point
+        last_hist_a = df['senkou_span_a'].iloc[-1]
+        last_hist_b = df['senkou_span_b'].iloc[-1]
+        if pd.notna(last_hist_a) and pd.notna(future_a[0]):
+            bridge_dates = pd.DatetimeIndex([last_date, future_dates[0]])
+            bridge_a = [last_hist_a, future_a[0]]
+            bridge_b = [last_hist_b, future_b[0]]
+            ax.plot(bridge_dates, bridge_a, color='orange', linewidth=1, alpha=0.4, linestyle='--', zorder=3)
+            ax.plot(bridge_dates, bridge_b, color='purple', linewidth=1, alpha=0.4, linestyle='--', zorder=3)
+            bridge_a_arr = np.array(bridge_a)
+            bridge_b_arr = np.array(bridge_b)
+            ax.fill_between(bridge_dates, bridge_a_arr, bridge_b_arr,
+                             where=bridge_a_arr >= bridge_b_arr,
+                             facecolor='palegreen', alpha=0.15, interpolate=True, zorder=0)
+            ax.fill_between(bridge_dates, bridge_a_arr, bridge_b_arr,
+                             where=bridge_a_arr < bridge_b_arr,
+                             facecolor='lightcoral', alpha=0.15, interpolate=True, zorder=0)
+
+        # Future Senkou lines (dashed)
+        ax.plot(future_dates, future_a, color='orange', linewidth=1, alpha=0.4, linestyle='--', zorder=3)
+        ax.plot(future_dates, future_b, color='purple', linewidth=1, alpha=0.4, linestyle='--', zorder=3)
+
+        # Future cloud fill (lighter alpha)
+        future_a_s = pd.Series(future_a, index=future_dates)
+        future_b_s = pd.Series(future_b, index=future_dates)
+        ax.fill_between(future_dates, future_a, future_b,
+                         where=future_a_s >= future_b_s,
+                         facecolor='palegreen', alpha=0.15, interpolate=True, zorder=0)
+        ax.fill_between(future_dates, future_a, future_b,
+                         where=future_a_s < future_b_s,
+                         facecolor='lightcoral', alpha=0.15, interpolate=True, zorder=0)
+
+        # Subtle vertical divider at the last trading date
+        ax.axvline(x=last_date, color='gray', linewidth=0.5, alpha=0.5, linestyle=':')
+
+        chart_right_edge = future_dates[-1]
 
     # Formatting
     ax.set_title(f'{stock_name} ({ticker}) - Ichimoku Cloud Chart', fontsize=16, fontweight='bold')
@@ -237,26 +333,27 @@ def plot_ichimoku(df, ticker, stock_name, filename=None, output_folder=None, ana
     if analysis and analysis.get('trade_targets'):
         targets = analysis['trade_targets']
         last_date = df.index[-1]
+        # chart_right_edge is set earlier (future cloud edge or last date)
         date_range_start = df.index[int(len(df) * 0.8)]
 
         if targets.get('stop_loss_primary'):
-            ax.hlines(y=targets['stop_loss_primary'], xmin=date_range_start, xmax=last_date,
+            ax.hlines(y=targets['stop_loss_primary'], xmin=date_range_start, xmax=chart_right_edge,
                       colors='red', linestyles='dashed', linewidth=1.2, alpha=0.8, zorder=4)
-            ax.annotate('SL', xy=(last_date, targets['stop_loss_primary']),
+            ax.annotate('SL', xy=(chart_right_edge, targets['stop_loss_primary']),
                         fontsize=8, color='red', fontweight='bold',
                         xytext=(5, 0), textcoords='offset points')
 
         if targets.get('take_profit_1'):
-            ax.hlines(y=targets['take_profit_1'], xmin=date_range_start, xmax=last_date,
+            ax.hlines(y=targets['take_profit_1'], xmin=date_range_start, xmax=chart_right_edge,
                       colors='green', linestyles='dashed', linewidth=1.2, alpha=0.8, zorder=4)
-            ax.annotate('TP1', xy=(last_date, targets['take_profit_1']),
+            ax.annotate('TP1', xy=(chart_right_edge, targets['take_profit_1']),
                         fontsize=8, color='green', fontweight='bold',
                         xytext=(5, 0), textcoords='offset points')
 
         if targets.get('take_profit_2'):
-            ax.hlines(y=targets['take_profit_2'], xmin=date_range_start, xmax=last_date,
+            ax.hlines(y=targets['take_profit_2'], xmin=date_range_start, xmax=chart_right_edge,
                       colors='darkgreen', linestyles='dotted', linewidth=1, alpha=0.6, zorder=4)
-            ax.annotate('TP2', xy=(last_date, targets['take_profit_2']),
+            ax.annotate('TP2', xy=(chart_right_edge, targets['take_profit_2']),
                         fontsize=8, color='darkgreen',
                         xytext=(5, 0), textcoords='offset points')
 
@@ -490,6 +587,15 @@ def analyze_single_day(df, day_idx, chikou_offset):
         elif kijun_is_flat:
             components['flat_lines'] = -0.25
 
+    # Future cloud color (core condition)
+    components['future_cloud_color'] = 0
+    if ('future_senkou_a' in day_data.index and 'future_senkou_b' in day_data.index
+            and pd.notna(day_data.get('future_senkou_a')) and pd.notna(day_data.get('future_senkou_b'))):
+        if day_data['future_senkou_a'] > day_data['future_senkou_b']:
+            components['future_cloud_color'] = 1
+        else:
+            components['future_cloud_color'] = -1
+
     return components
 
 
@@ -590,20 +696,40 @@ def analyze_ichimoku_signals(df, ticker, stock_name):
             component_tk['contribution'] = 0
     analysis['components']['tk_cross'] = component_tk
 
-    # Component 3: Cloud Color (Future Cloud / Senkou Spans)
-    component_cloud = {'name': 'Future Cloud Color', 'signal': 'NEUTRAL', 'description': '', 'contribution': 0}
+    # Component 3: Cloud Color (current cloud surrounding price)
+    component_cloud = {'name': 'Cloud Color', 'signal': 'NEUTRAL', 'description': '', 'contribution': 0}
     if pd.notna(latest['senkou_span_a']) and pd.notna(latest['senkou_span_b']):
         if latest['senkou_span_a'] > latest['senkou_span_b']:
-            analysis['signals'].append("Cloud is green/bullish (future support)")
+            analysis['signals'].append("Cloud is green/bullish (support)")
             component_cloud['signal'] = 'BULLISH'
-            component_cloud['description'] = f"Senkou A ${latest['senkou_span_a']:.2f} > Senkou B ${latest['senkou_span_b']:.2f} (green cloud)"
+            component_cloud['description'] = f"Senkou A ${latest['senkou_span_a']:.2f} > Senkou B ${latest['senkou_span_b']:.2f} (green cloud at price)"
             component_cloud['contribution'] = 1
         else:
-            analysis['signals'].append("Cloud is red/bearish (future resistance)")
+            analysis['signals'].append("Cloud is red/bearish (resistance)")
             component_cloud['signal'] = 'BEARISH'
-            component_cloud['description'] = f"Senkou A ${latest['senkou_span_a']:.2f} < Senkou B ${latest['senkou_span_b']:.2f} (red cloud)"
+            component_cloud['description'] = f"Senkou A ${latest['senkou_span_a']:.2f} < Senkou B ${latest['senkou_span_b']:.2f} (red cloud at price)"
             component_cloud['contribution'] = -1
     analysis['components']['cloud_color'] = component_cloud
+
+    # Component 6: Future Cloud Color (projected cloud 26 periods ahead)
+    component_future_cloud = {'name': 'Future Cloud Color', 'signal': 'NEUTRAL', 'description': '', 'contribution': 0}
+    if ('future_senkou_a' in latest.index and 'future_senkou_b' in latest.index
+            and pd.notna(latest.get('future_senkou_a')) and pd.notna(latest.get('future_senkou_b'))):
+        if latest['future_senkou_a'] > latest['future_senkou_b']:
+            component_future_cloud['signal'] = 'BULLISH'
+            component_future_cloud['description'] = (
+                f"Future Senkou A ${latest['future_senkou_a']:.2f} > B ${latest['future_senkou_b']:.2f} "
+                f"— cloud 26 periods ahead is green/bullish"
+            )
+            component_future_cloud['contribution'] = 1
+        else:
+            component_future_cloud['signal'] = 'BEARISH'
+            component_future_cloud['description'] = (
+                f"Future Senkou A ${latest['future_senkou_a']:.2f} < B ${latest['future_senkou_b']:.2f} "
+                f"— cloud 26 periods ahead is red/bearish"
+            )
+            component_future_cloud['contribution'] = -1
+    analysis['components']['future_cloud_color'] = component_future_cloud
 
     # Component 4: Chikou Span vs Price and Cloud
     component_chikou = {'name': 'Chikou Span (Lagging)', 'signal': 'NEUTRAL', 'description': '', 'contribution': 0}
@@ -860,6 +986,8 @@ def analyze_ichimoku_signals(df, ticker, stock_name):
             enh_flat['contribution'] = 0
     analysis['enhancements']['flat_lines'] = enh_flat
 
+    # (Future Cloud Color is now a core condition — see Component 6 above)
+
     # --- EVENT SIGNALS (only triggered when actual event occurs) ---
     # These are true signals that detect day-over-day changes/crossovers
 
@@ -1032,7 +1160,7 @@ def analyze_ichimoku_signals(df, ticker, stock_name):
     # Compare with previous day and mark changes
     if prev_day_components:
         # Core components
-        for comp_key in ['kumo', 'tk_cross', 'cloud_color', 'chikou', 'kijun']:
+        for comp_key in ['kumo', 'tk_cross', 'cloud_color', 'future_cloud_color', 'chikou', 'kijun']:
             current_val = analysis['components'].get(comp_key, {}).get('contribution', 0)
             prev_val = prev_day_components.get(comp_key, 0)
             if current_val != prev_val:
@@ -1054,7 +1182,7 @@ def analyze_ichimoku_signals(df, ticker, stock_name):
 
     # Calculate previous total score for comparison (core 5 components only)
     if prev_day_components:
-        core_keys = ['kumo', 'tk_cross', 'cloud_color', 'chikou', 'kijun']
+        core_keys = ['kumo', 'tk_cross', 'cloud_color', 'future_cloud_color', 'chikou', 'kijun']
         prev_total = sum(prev_day_components.get(k, 0) for k in core_keys)
         analysis['prev_total_score'] = prev_total
         if total_score != prev_total:
@@ -1159,12 +1287,12 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
 
     # Summary table with component breakdown
     report_lines.append("SUMMARY TABLE (* = changed from previous day):")
-    report_lines.append("-" * 155)
+    report_lines.append("-" * 165)
     report_lines.append(
-        f"{'Ticker':<12} {'Kumo':>6} {'TK':>6} {'Cloud':>6} {'Chik':>6} {'Kij':>6} "
+        f"{'Ticker':<12} {'Kumo':>6} {'TK':>6} {'Cloud':>6} {'FCC':>6} {'Chik':>6} {'Kij':>6} "
         f"{'Score':>7} {'Conf':>5} {'Long Entry':<15} {'Price':>10} {'SL':>10} {'TP1':>10}"
     )
-    report_lines.append("-" * 155)
+    report_lines.append("-" * 165)
 
     for analysis in analyses:
         components = analysis.get('components', {})
@@ -1174,6 +1302,7 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
         kumo = components.get('kumo', {}).get('contribution', 0)
         tk = components.get('tk_cross', {}).get('contribution', 0)
         cloud = components.get('cloud_color', {}).get('contribution', 0)
+        fcc = components.get('future_cloud_color', {}).get('contribution', 0)
         chikou = components.get('chikou', {}).get('contribution', 0)
         kijun = components.get('kijun', {}).get('contribution', 0)
         total = analysis.get('total_score', 0)
@@ -1182,6 +1311,7 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
         kumo_str = f"*{kumo:+.1f}" if 'kumo' in changes else f"{kumo:+.1f}"
         tk_str = f"*{tk:+.1f}" if 'tk_cross' in changes else f"{tk:+.1f}"
         cloud_str = f"*{cloud:+.1f}" if 'cloud_color' in changes else f"{cloud:+.1f}"
+        fcc_str = f"*{fcc:+.1f}" if 'future_cloud_color' in changes else f"{fcc:+.1f}"
         chikou_str = f"*{chikou:+.1f}" if 'chikou' in changes else f"{chikou:+.1f}"
         kijun_str = f"*{kijun:+.1f}" if 'kijun' in changes else f"{kijun:+.1f}"
         total_str = f"*{total:+.1f}" if 'total' in changes else f"{total:+.1f}"
@@ -1194,6 +1324,7 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
             f"{kumo_str:>6} "
             f"{tk_str:>6} "
             f"{cloud_str:>6} "
+            f"{fcc_str:>6} "
             f"{chikou_str:>6} "
             f"{kijun_str:>6} "
             f"{total_str:>7} "
@@ -1204,10 +1335,10 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
             f"{tp1_str:>10}"
         )
 
-    report_lines.append("-" * 155)
-    report_lines.append("Legend: Kumo=Price vs Cloud | TK=Tenkan vs Kijun | Cloud=Future Cloud Color | Chik=Chikou Span | Kij=Price vs Kijun")
+    report_lines.append("-" * 165)
+    report_lines.append("Legend: Kumo=Price vs Cloud | TK=Tenkan vs Kijun | Cloud=Cloud Color | FCC=Future Cloud Color | Chik=Chikou Span | Kij=Price vs Kijun")
     report_lines.append("        Conf=Signal Confidence | SL=Stop-Loss | TP1=Take-Profit Target 1 | * = changed from previous day")
-    report_lines.append("="*155)
+    report_lines.append("="*165)
     report_lines.append("")
 
     # Detailed analysis for each stock
@@ -1260,11 +1391,12 @@ def generate_report(analyses, filename="ichimoku_trading_report.txt", output_fol
         report_lines.append("-" * 80)
 
         # Display each component as a condition
-        component_order = ['kumo', 'tk_cross', 'cloud_color', 'chikou', 'kijun']
+        component_order = ['kumo', 'tk_cross', 'cloud_color', 'future_cloud_color', 'chikou', 'kijun']
         component_display_names = {
             'kumo': 'Price vs Cloud (Kumo)',
             'tk_cross': 'TK Relationship',
             'cloud_color': 'Cloud Color',
+            'future_cloud_color': 'Future Cloud Color',
             'chikou': 'Chikou Position',
             'kijun': 'Kijun Support'
         }
@@ -1450,7 +1582,7 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
     content.append(Paragraph("SUMMARY TABLE (* = changed from previous day)", heading_style))
 
     # Build table data
-    table_data = [['Ticker', 'Kumo', 'TK', 'Cloud', 'Chik', 'Kij', 'Score', 'Conf%', 'Recommendation', 'Price', 'SL', 'TP1']]
+    table_data = [['Ticker', 'Kumo', 'TK', 'Cloud', 'FCC', 'Chik', 'Kij', 'Score', 'Conf%', 'Recommendation', 'Price', 'SL', 'TP1']]
 
     for analysis in analyses:
         components = analysis.get('components', {})
@@ -1460,6 +1592,7 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
         kumo = components.get('kumo', {}).get('contribution', 0)
         tk = components.get('tk_cross', {}).get('contribution', 0)
         cloud = components.get('cloud_color', {}).get('contribution', 0)
+        fcc = components.get('future_cloud_color', {}).get('contribution', 0)
         chikou = components.get('chikou', {}).get('contribution', 0)
         kijun = components.get('kijun', {}).get('contribution', 0)
         total = analysis.get('total_score', 0)
@@ -1468,6 +1601,7 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
         kumo_str = f"{kumo:+.1f}*" if 'kumo' in changes else f"{kumo:+.1f}"
         tk_str = f"{tk:+.1f}*" if 'tk_cross' in changes else f"{tk:+.1f}"
         cloud_str = f"{cloud:+.1f}*" if 'cloud_color' in changes else f"{cloud:+.1f}"
+        fcc_str = f"{fcc:+.1f}*" if 'future_cloud_color' in changes else f"{fcc:+.1f}"
         chikou_str = f"{chikou:+.1f}*" if 'chikou' in changes else f"{chikou:+.1f}"
         kijun_str = f"{kijun:+.1f}*" if 'kijun' in changes else f"{kijun:+.1f}"
         total_str = f"{total:+.1f}*" if 'total' in changes else f"{total:+.1f}"
@@ -1487,6 +1621,7 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
             kumo_str,
             tk_str,
             cloud_str,
+            fcc_str,
             chikou_str,
             kijun_str,
             total_str,
@@ -1515,8 +1650,8 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
     # Color code recommendations and confidence
     for i, analysis in enumerate(analyses, 1):
         rec = analysis['recommendation']
-        rec_col = 8  # Recommendation column index
-        conf_col = 7  # Confidence column index
+        rec_col = 9  # Recommendation column index
+        conf_col = 8  # Confidence column index
         if rec == 'BUY':
             table.setStyle(TableStyle([('BACKGROUND', (rec_col, i), (rec_col, i), colors.lightgreen)]))
         elif rec == 'BUY (MODERATE)':
@@ -1543,7 +1678,7 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
     content.append(Spacer(1, 0.2*inch))
 
     # Legend
-    legend_text = "Legend: Kumo=Price vs Cloud | TK=Tenkan vs Kijun | Cloud=Future Cloud Color | Chik=Chikou Span | Kij=Price vs Kijun"
+    legend_text = "Legend: Kumo=Price vs Cloud | TK=Tenkan vs Kijun | Cloud=Cloud Color | FCC=Future Cloud Color | Chik=Chikou Span | Kij=Price vs Kijun"
     content.append(Paragraph(legend_text, normal_style))
     content.append(Paragraph("Conf%=Signal Confidence | SL=Stop-Loss | TP1=Take-Profit Target 1 | * = changed from previous day", normal_style))
 
@@ -1619,11 +1754,12 @@ def generate_pdf_report(analyses, charts_folder, output_folder, filename="ichimo
             'kumo': 'Price vs Cloud (Kumo)',
             'tk_cross': 'TK Relationship',
             'cloud_color': 'Cloud Color',
+            'future_cloud_color': 'Future Cloud Color',
             'chikou': 'Chikou Position',
             'kijun': 'Kijun Support'
         }
 
-        for comp_key in ['kumo', 'tk_cross', 'cloud_color', 'chikou', 'kijun']:
+        for comp_key in ['kumo', 'tk_cross', 'cloud_color', 'future_cloud_color', 'chikou', 'kijun']:
             comp = analysis['components'].get(comp_key, {})
             contrib = comp.get('contribution', 0)
 
@@ -2136,6 +2272,13 @@ body {{
   transform: translateY(-2px);
   box-shadow: var(--shadow);
 }}
+/* Highlight cards with triggered signals */
+.card.has-signal {{
+  background: linear-gradient(135deg, rgba(250, 204, 21, 0.12) 0%, rgba(250, 204, 21, 0.06) 100%);
+}}
+.card.has-signal:hover {{
+  background: linear-gradient(135deg, rgba(250, 204, 21, 0.18) 0%, rgba(250, 204, 21, 0.10) 100%);
+}}
 .card-header {{
   display: flex;
   justify-content: space-between;
@@ -2428,13 +2571,70 @@ body {{
   background: var(--bg-primary);
   border-radius: var(--radius);
   border: 1px solid var(--border);
+  position: relative;
+  resize: vertical;
   overflow: hidden;
+  min-height: 200px;
+}}
+.chart-wrapper {{
   position: relative;
 }}
-.chart-container img {{
+.chart-wrapper:active {{
+  cursor: grabbing;
+}}
+.chart-wrapper img {{
+  display: block;
+  transform-origin: 0 0;
+}}
+.chart-wrapper.fit {{
+  cursor: default;
+}}
+.chart-wrapper.fit img {{
   width: 100%;
   height: auto;
-  display: block;
+}}
+.chart-wrapper.zoomed {{
+  overflow: auto;
+  height: 100%;
+  cursor: grab;
+}}
+.chart-controls {{
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 6px;
+  z-index: 10;
+}}
+.chart-btn {{
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.7);
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: bold;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}}
+.chart-btn:hover {{
+  background: rgba(0, 0, 0, 0.85);
+}}
+.chart-btn:disabled {{
+  opacity: 0.4;
+  cursor: not-allowed;
+}}
+.zoom-level {{
+  background: rgba(0, 0, 0, 0.7);
+  color: var(--text-primary);
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: var(--font-mono);
 }}
 .chart-placeholder {{
   padding: 60px;
@@ -2833,7 +3033,7 @@ function renderGrid() {{
   noResults.style.display = 'none';
 
   grid.innerHTML = filtered.map(s => `
-    <div class="card rec-${{recClass(s.recommendation)}}" onclick="openModal('${{s.ticker}}')">
+    <div class="card rec-${{recClass(s.recommendation)}}${{s.has_signals ? ' has-signal' : ''}}" onclick="openModal('${{s.ticker}}')">
       ${{s.has_signals ? '<div class="signal-dot" title="Event signal triggered today!"></div>' : ''}}
       ${{s.has_changes ? '<div class="change-dot" title="Conditions changed from previous day"></div>' : ''}}
       <div class="card-header">
@@ -2877,9 +3077,10 @@ function openModal(ticker) {{
   const compTooltips = {{
     'kumo': 'Price vs Cloud (Kumo): Where price sits relative to the Ichimoku cloud. Above cloud = bullish (+2), below = bearish (-2), inside = neutral.',
     'tk_cross': 'Tenkan-Kijun Cross: The Tenkan-sen (9-period) crossing above/below the Kijun-sen (26-period). Bullish cross = +1, bearish = -1.',
-    'cloud_color': 'Future Cloud Color: Whether Senkou Span A is above or below Senkou Span B projected 26 periods ahead. Green cloud = +1, red = -1.',
+    'cloud_color': 'Cloud Color: Whether the cloud at the current price level is green (Senkou A > B, +1) or red (Senkou A < B, -1).',
     'chikou': 'Chikou Span (Lagging Line): Current price plotted 26 periods back vs past price action. Above = bullish (up to +2), below = bearish (down to -2).',
-    'kijun': 'Kijun-sen Support: Whether price is holding above or below the Kijun-sen (26-period baseline). Above = support (+1), below = resistance (-1).'
+    'kijun': 'Kijun-sen Support: Whether price is holding above or below the Kijun-sen (26-period baseline). Above = support (+1), below = resistance (-1).',
+    'future_cloud_color': 'Future Cloud Color: The projected cloud color 26 periods ahead based on current Tenkan/Kijun values. Bullish (green) = +1, bearish (red) = -1.'
   }};
   const enhTooltips = {{
     'volume_confirm': 'Volume Confirmation: Compares current volume to 20-day average. 1.5x+ confirms trend direction (\\u00b11), 0.5x or less = weak conviction (-0.5).',
@@ -2920,7 +3121,7 @@ function openModal(ticker) {{
   }}
 
   // Build condition rows (formerly components)
-  const compNames = {{'kumo': 'Kumo Position', 'tk_cross': 'TK Relationship', 'cloud_color': 'Cloud Color', 'chikou': 'Chikou Position', 'kijun': 'Kijun Support'}};
+  const compNames = {{'kumo': 'Kumo Position', 'tk_cross': 'TK Relationship', 'cloud_color': 'Cloud Color', 'future_cloud_color': 'Future Cloud Color', 'chikou': 'Chikou Position', 'kijun': 'Kijun Support'}};
   let compRows = '';
   for (const [key, label] of Object.entries(compNames)) {{
     const c = s.components[key];
@@ -2985,7 +3186,17 @@ function openModal(ticker) {{
   }}
 
   const chartHtml = s.chart_file
-    ? `<div class="chart-container"><img src="${{s.chart_file}}" alt="${{s.ticker}} Ichimoku Chart" loading="lazy"></div>`
+    ? `<div class="chart-container">
+        <div class="chart-controls">
+          <button class="chart-btn" id="zoomOut" title="Zoom out">−</button>
+          <span class="zoom-level" id="zoomLevel">100%</span>
+          <button class="chart-btn" id="zoomIn" title="Zoom in">+</button>
+          <button class="chart-btn" id="zoomFit" title="Fit to width">⤢</button>
+        </div>
+        <div class="chart-wrapper fit" id="chartWrapper">
+          <img src="${{s.chart_file}}" alt="${{s.ticker}} Ichimoku Chart" id="chartImg">
+        </div>
+      </div>`
     : '<div class="chart-container"><div class="chart-placeholder">Chart not available</div></div>';
 
   document.getElementById('modalBody').innerHTML = `
@@ -3043,6 +3254,128 @@ function openModal(ticker) {{
 
   document.getElementById('modalBackdrop').classList.add('open');
   document.body.style.overflow = 'hidden';
+
+  // Initialize chart zoom
+  if (s.chart_file) {{
+    initChartZoom();
+  }}
+}}
+
+function initChartZoom() {{
+  const container = document.querySelector('.chart-container');
+  const wrapper = document.getElementById('chartWrapper');
+  const img = document.getElementById('chartImg');
+  const zoomInBtn = document.getElementById('zoomIn');
+  const zoomOutBtn = document.getElementById('zoomOut');
+  const zoomFitBtn = document.getElementById('zoomFit');
+  const zoomLevelEl = document.getElementById('zoomLevel');
+
+  if (!wrapper || !img) return;
+
+  let scale = 1;
+  let isFit = true;
+  const minScale = 0.5;
+  const maxScale = 4;
+  const scaleStep = 0.25;
+
+  function updateZoom() {{
+    if (isFit) {{
+      wrapper.classList.add('fit');
+      wrapper.classList.remove('zoomed');
+      img.style.width = '';
+      container.style.height = '';
+      zoomLevelEl.textContent = 'Fit';
+    }} else {{
+      wrapper.classList.remove('fit');
+      wrapper.classList.add('zoomed');
+      img.style.width = (scale * 100) + '%';
+      zoomLevelEl.textContent = Math.round(scale * 100) + '%';
+      // Set container height for scrollable zoomed view (keep current or use 70vh)
+      if (!container.style.height || container.style.height === '') {{
+        container.style.height = Math.round(window.innerHeight * 0.7) + 'px';
+      }}
+    }}
+    zoomOutBtn.disabled = !isFit && scale <= minScale;
+    zoomInBtn.disabled = scale >= maxScale;
+  }}
+
+  function zoomIn() {{
+    if (isFit) {{
+      isFit = false;
+      scale = 1;
+    }}
+    scale = Math.min(maxScale, scale + scaleStep);
+    updateZoom();
+  }}
+
+  function zoomOut() {{
+    if (isFit) {{
+      isFit = false;
+      scale = 1;
+    }}
+    scale = Math.max(minScale, scale - scaleStep);
+    updateZoom();
+  }}
+
+  function fitToWidth() {{
+    isFit = true;
+    scale = 1;
+    container.style.height = '';
+    updateZoom();
+    wrapper.scrollLeft = 0;
+    wrapper.scrollTop = 0;
+  }}
+
+  zoomInBtn.addEventListener('click', zoomIn);
+  zoomOutBtn.addEventListener('click', zoomOut);
+  zoomFitBtn.addEventListener('click', fitToWidth);
+
+  // Mouse wheel zoom
+  wrapper.addEventListener('wheel', (e) => {{
+    if (e.ctrlKey || e.metaKey) {{
+      e.preventDefault();
+      if (e.deltaY < 0) zoomIn();
+      else zoomOut();
+    }}
+  }}, {{ passive: false }});
+
+  // Pan/drag support
+  let isDragging = false;
+  let startX, startY, scrollL, scrollT;
+
+  wrapper.addEventListener('mousedown', (e) => {{
+    if (isFit) return;
+    isDragging = true;
+    startX = e.clientX;
+    startY = e.clientY;
+    scrollL = wrapper.scrollLeft;
+    scrollT = wrapper.scrollTop;
+  }});
+
+  wrapper.addEventListener('mouseleave', () => {{ isDragging = false; }});
+  wrapper.addEventListener('mouseup', () => {{ isDragging = false; }});
+
+  wrapper.addEventListener('mousemove', (e) => {{
+    if (!isDragging) return;
+    e.preventDefault();
+    wrapper.scrollLeft = scrollL - (e.clientX - startX);
+    wrapper.scrollTop = scrollT - (e.clientY - startY);
+  }});
+
+  // Double-click to toggle fit/zoom
+  wrapper.addEventListener('dblclick', () => {{
+    if (isFit) {{
+      isFit = false;
+      scale = 1.5;
+    }} else {{
+      isFit = true;
+      scale = 1;
+      container.style.height = '';
+    }}
+    updateZoom();
+  }});
+
+  updateZoom();
 }}
 
 function closeModal() {{
@@ -3215,7 +3548,7 @@ h1 span {{ color:var(--blue); }}
     return filepath
 
 
-def process_stock(stock_info, period, interval, save_csv, save_chart, charts_folder=None, data_folder=None, stock_index=0, stock_total=0):
+def process_stock(stock_info, period, interval, save_csv, save_chart, charts_folder=None, data_folder=None, cache_folder=None, stock_index=0, stock_total=0):
     """
     Process a single stock: download data and create chart
 
@@ -3235,6 +3568,8 @@ def process_stock(stock_info, period, interval, save_csv, save_chart, charts_fol
         Folder to save chart PNG files (default: current directory)
     data_folder : str
         Folder to save CSV data files (default: current directory)
+    cache_folder : str
+        Folder for persistent price data cache (enables incremental downloads)
     stock_index : int
         Current stock number (1-based) for progress display
     stock_total : int
@@ -3251,7 +3586,7 @@ def process_stock(stock_info, period, interval, save_csv, save_chart, charts_fol
     print(f"  {progress} {name} ({ticker})...", end=" ", flush=True)
 
     # Download stock data
-    df = download_stock(ticker, name, period=period, interval=interval, save_to_csv=save_csv, output_folder=data_folder)
+    df = download_stock(ticker, name, period=period, interval=interval, save_to_csv=save_csv, output_folder=data_folder, cache_folder=cache_folder)
 
     if df is not None:
         # Calculate Ichimoku indicators
@@ -3334,6 +3669,11 @@ def archive_previous_output(base_output_folder, archive_folder, runs_to_keep=2):
 def main():
     """Main function to run the script"""
 
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='Ichimoku Cloud Stock Scanner')
+    parser.add_argument('--test', action='store_true', help='Test mode: only process 5 stocks per market')
+    args = parser.parse_args()
+
     # Load configuration first (needed for archive settings)
     config = load_stocks_config()
 
@@ -3352,6 +3692,7 @@ def main():
     # Define folders
     base_output_folder = "Output"
     archive_folder = "Archive"
+    base_cache_folder = "Data"
 
     # Archive previous output before starting new run
     archive_previous_output(base_output_folder, archive_folder, archive_runs_to_keep)
@@ -3369,7 +3710,8 @@ def main():
     # Count total stocks across all markets
     total_stocks = sum(len(market_data.get('stocks', [])) for market_data in markets.values())
 
-    print(f"Ichimoku Cloud Scanner — {total_stocks} stocks across {len(markets)} market(s) ({period}, {interval})")
+    test_label = " [TEST MODE — 5 stocks/market]" if args.test else ""
+    print(f"Ichimoku Cloud Scanner — {total_stocks} stocks across {len(markets)} market(s) ({period}, {interval}){test_label}")
 
     # Process each market
     market_summaries = []
@@ -3378,6 +3720,9 @@ def main():
         market_name = market_data.get('name', market_key)
         currency = market_data.get('currency', 'USD')
         stocks = market_data.get('stocks', [])
+
+        if args.test:
+            stocks = stocks[:5]
 
         if not stocks:
             print(f"\nSkipping {market_name} - no stocks configured")
@@ -3389,9 +3734,11 @@ def main():
         market_output_folder = os.path.join(base_output_folder, market_key)
         charts_folder = os.path.join(market_output_folder, "charts")
         data_folder = os.path.join(market_output_folder, "data")
+        cache_folder = os.path.join(base_cache_folder, market_key)
         os.makedirs(market_output_folder, exist_ok=True)
         os.makedirs(charts_folder, exist_ok=True)
         os.makedirs(data_folder, exist_ok=True)
+        os.makedirs(cache_folder, exist_ok=True)
 
         # Process each stock in this market and collect analyses
         analyses = []
@@ -3400,6 +3747,7 @@ def main():
             try:
                 analysis = process_stock(stock_info, period, interval, save_csv, save_chart,
                                          charts_folder=charts_folder, data_folder=data_folder,
+                                         cache_folder=cache_folder,
                                          stock_index=i, stock_total=num_stocks)
                 if analysis is not None:
                     analyses.append(analysis)
