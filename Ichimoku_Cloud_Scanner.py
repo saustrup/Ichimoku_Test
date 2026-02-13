@@ -3872,6 +3872,16 @@ def main():
             print(f"  Failed stocks:")
             for fs in failed_stocks:
                 print(f"    - {fs['name']} ({fs['ticker']}): {fs['reason']}")
+            # Save failed stocks to a text file
+            failed_file = os.path.join(market_output_folder, f"failed_stocks_{market_key}.txt")
+            with open(failed_file, 'w') as f:
+                f.write(f"FAILED STOCKS — {market_name}\n")
+                f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"{len(failed_stocks)} stock(s) could not be analyzed\n")
+                f.write("-" * 70 + "\n")
+                for fs in failed_stocks:
+                    f.write(f"{fs['ticker']:<12} {fs['name']:<30} {fs['reason']}\n")
+            print(f"  Failed list saved to {failed_file}")
 
         # Generate trading report for this market
         if analyses:
